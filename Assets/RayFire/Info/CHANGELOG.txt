@@ -1,0 +1,30 @@
+            
+  [2.04] November 24
+
+ - Lib. Crash fix for Mac builds.
+ - Rigid & RigidRoot. Removed Activation by Velocity.
+ - Rigid. Activation tutorial scene.
+   
+  [2.03] November 17
+
+ - Rigid. Demolition support for Static Simulation type objects.
+ - Rigid. Velocity caching works only for clusters.
+ - Rigid. Skinned Mesh demolition fix. 
+ - Rigid. Clusters inherited velocity fix.   
+ - Rigid. Increased Dampening Max cap.    
+ - Fix for Obsolete Unity methods.
+ - Rigid. Basic tutorial scenes.
+  
+  [2.02] November 11 
+  
+ - Rigid. Fixed bug with Use Shatter property.
+ - Rigid. Fix for collider set for demolition fragments.
+ - Rigid. Fragments inherited velocity fix.   
+ - Shatter. Tutorial scenes.
+    
+  [2.01] November 1
+ 
+ - First release
+ 
+ New fragmentation engine, 2-10 faster than old one (depends on mesh complexity).Removed older obsolete fragmentation engine.Code refactor and optimizations.IMPORTANT: For those who updates from older Rayfire for Unity plugin:
+ Components will require checkup for correct properties because of internal code changes that were postponed as much as possible before.
