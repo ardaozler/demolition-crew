@@ -19,6 +19,7 @@ public class DemolitionReplicator
     private readonly FragmentRegistry _registry;
     private readonly Queue<DemolitionRecord> _pendingRecords = new();
     private readonly bool _isHost;
+    private bool _needsKinematicEnforcement;
 
     public DemolitionReplicator(FragmentRegistry registry, bool isHost)
     {
@@ -123,6 +124,30 @@ public class DemolitionReplicator
         if (rigid.HasFragments && hostFragPositions != null && hostFragPositions.Length > 0)
         {
             RegisterClientFragments(rigid.fragments, hostFragPositions);
+        }
+
+        // Flag that kinematic state needs re-enforcement after this frame's
+        // demolitions are done. The manager batches this into a single pass.
+        _needsKinematicEnforcement = true;
+    }
+
+    /// <summary>
+    /// If any demolitions ran this frame, re-enforce kinematic state on all
+    /// registered fragments. Called once per frame by the manager, not per-demolition.
+    /// </summary>
+    public void FlushKinematicEnforcement()
+    {
+        if (!_needsKinematicEnforcement) return;
+        _needsKinematicEnforcement = false;
+
+        foreach (var kvp in _registry.All)
+        {
+            var frag = kvp.Value;
+            if (frag.Rigidbody != null && !frag.Rigidbody.isKinematic)
+            {
+                frag.Rigidbody.isKinematic = true;
+                frag.Rigidbody.interpolation = RigidbodyInterpolation.None;
+            }
         }
     }
 

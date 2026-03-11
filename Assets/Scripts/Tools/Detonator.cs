@@ -21,7 +21,7 @@ namespace InteractionSystem
         public void OnUnequip(GameObject owner)
         {
             // Player dropped the detonator without detonating
-            if (linkedBomb != null)
+            if (linkedBomb != null && linkedBomb.gameObject != null)
                 linkedBomb.ClearDetonatorRef();
         }
 

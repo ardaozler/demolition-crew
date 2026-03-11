@@ -13,7 +13,8 @@
       "mcp__UnityMCP__manage_prefabs",
       "mcp__UnityMCP__execute_menu_item",
       "Bash(ls:*)",
-      "mcp__UnityMCP__find_gameobjects"
+      "mcp__UnityMCP__find_gameobjects",
+      "Bash(grep -l \"RayfireDebris\\\\|RayfireDust\" /c/Unity/UnityProjects/DemolitionGit/demolition-crew/Assets/Scenes/*.unity 2>/dev/null || echo \"No matches in scene files\")"
     ]
   }
 }

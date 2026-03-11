@@ -24,6 +24,13 @@
 - Transform sync uses delta compression with position threshold 0.05 units and rotation threshold 1 degree
 - Broadcast rate: every 3rd FixedUpdate (~16.67 Hz at 50Hz physics)
 - Purge cycle: every 5 seconds for destroyed fragments
+- EnforceClientKinematic() added after DemolishForced to catch RayFire connectivity activations
 
 ## Audit Status
-- Full audit completed 2026-03-11. See `audit-findings.md` for detailed report.
+- Full audit completed 2026-03-11 (updated). See `audit-findings.md` for detailed report.
+- Top blocker: no late-join state hydration (C1)
+- RequestDamageRpc validation is solid (rate limit, distance check, server-determined damage)
+- EquipmentHandler has rate limit on equip but NOT on UseServerRpc
+- Bomb.Detonate has `detonated` bool guard against double-detonation
+- Detonator.OnUnequip missing null check on linkedBomb (crash risk)
+- ProjectileLauncher is test-only but not gated behind any debug flag

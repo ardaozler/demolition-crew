@@ -26,6 +26,7 @@ namespace InteractionSystem
         private float _lastUseTime;
         private float _lastEquipTime;
         private const float MinEquipInterval = 0.2f;
+        private const float MinUseInterval = 0.15f;
 
         public IUsable CurrentUsable => currentUsable;
         public bool HasEquipped => currentUsable != null;
@@ -161,6 +162,10 @@ namespace InteractionSystem
         private void UseServerRpc(Vector3 aimOrigin, Vector3 aimDirection)
         {
             if (!equippedItemRef.Value.TryGet(out _)) return;
+
+            // Rate limit
+            if (Time.time - _lastUseTime < MinUseInterval) return;
+            _lastUseTime = Time.time;
 
             // Validate aim origin is near the player's actual position
             float originDist = Vector3.Distance(aimOrigin, transform.position);

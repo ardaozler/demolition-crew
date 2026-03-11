@@ -72,7 +72,10 @@ public class DestructionNetworkManager : NetworkBehaviour
         if (!_initialized) return;
 
         if (!IsServer)
+        {
             _broadcaster.InterpolateClient(Time.deltaTime);
+            _replicator.FlushKinematicEnforcement();
+        }
 
         // Periodic cleanup of destroyed fragments
         _purgeTimer += Time.deltaTime;

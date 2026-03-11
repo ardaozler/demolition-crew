@@ -17,7 +17,7 @@ public class TransformSyncBroadcaster
     private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _targets = new();
     private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _lastSent = new();
 
-    // Pre-allocated lists reused to avoid GC
+    // Pre-allocated buffers reused to avoid GC
     private readonly List<FragmentSnapshot> _snapshotBuffer = new();
     private readonly List<int> _purgeBuffer = new();
 
@@ -99,11 +99,13 @@ public class TransformSyncBroadcaster
     }
 
     /// <summary>
-    /// Remove stale entries for fragments that no longer exist.
+    /// Remove stale entries for fragments that no longer exist or have gone kinematic.
     /// </summary>
     public void PurgeStale()
     {
         _purgeBuffer.Clear();
+
+        // Purge targets (client-side)
         foreach (var kvp in _targets)
         {
             if (!_registry.TryGet(kvp.Key, out var entry) || entry.Transform == null)
@@ -114,5 +116,17 @@ public class TransformSyncBroadcaster
             _targets.Remove(_purgeBuffer[i]);
             _lastSent.Remove(_purgeBuffer[i]);
         }
+
+        // Purge _lastSent for fragments no longer in the registry or now kinematic (host-side)
+        _purgeBuffer.Clear();
+        foreach (var kvp in _lastSent)
+        {
+            if (!_registry.TryGet(kvp.Key, out var entry) || entry.Transform == null)
+                _purgeBuffer.Add(kvp.Key);
+            else if (entry.Rigidbody != null && entry.Rigidbody.isKinematic)
+                _purgeBuffer.Add(kvp.Key);
+        }
+        for (int i = 0; i < _purgeBuffer.Count; i++)
+            _lastSent.Remove(_purgeBuffer[i]);
     }
 }
