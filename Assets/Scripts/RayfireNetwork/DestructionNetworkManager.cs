@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using RayFire;
 using Unity.Netcode;
 using UnityEngine;
@@ -101,6 +102,8 @@ public class DestructionNetworkManager : NetworkBehaviour
             DemolishObjectRpc(
                 record.SceneObjectId,
                 record.HitPoint,
+                record.ObjectPosition,
+                record.ObjectRotation,
                 record.FragmentBaseId,
                 record.FragmentCount,
                 record.FragmentPositions);
@@ -109,11 +112,34 @@ public class DestructionNetworkManager : NetworkBehaviour
 
     // ----- RPCs: Client -> Server -----
 
+    [Header("Damage Settings")]
+    [SerializeField] private float defaultDamage = 10f;
+    [SerializeField] private float defaultDamageRadius = 1f;
+    [SerializeField] private float maxDamageRange = 10f;
+    [SerializeField] private float damageRpcCooldown = 0.05f;
+
+    private readonly Dictionary<ulong, float> _lastDamageTime = new();
+
     [Rpc(SendTo.Server)]
-    public void RequestDamageRpc(int sceneObjectId, Vector3 hitPoint, float damage)
+    public void RequestDamageRpc(int sceneObjectId, Vector3 hitPoint, RpcParams rpcParams = default)
     {
+        // Rate limit per client
+        ulong senderId = rpcParams.Receive.SenderClientId;
+        if (_lastDamageTime.TryGetValue(senderId, out float lastTime) &&
+            Time.time - lastTime < damageRpcCooldown)
+            return;
+        _lastDamageTime[senderId] = Time.time;
+
         if (!_registry.TryGet(sceneObjectId, out var entry) || entry.Rigid == null)
             return;
+
+        // Distance check — sender must be near the target
+        if (NetworkManager.ConnectedClients.TryGetValue(senderId, out var client) &&
+            client.PlayerObject != null)
+        {
+            float dist = Vector3.Distance(client.PlayerObject.transform.position, hitPoint);
+            if (dist > maxDamageRange) return;
+        }
 
         // Inactive MeshRoot shard — activate directly
         if (entry.Rigid.simTp == SimType.Inactive && entry.Rigid.meshRoot != null)
@@ -125,16 +151,19 @@ public class DestructionNetworkManager : NetworkBehaviour
         if (entry.Rigidbody != null && entry.Rigidbody.isKinematic)
             entry.Rigidbody.isKinematic = false;
 
-        entry.Rigid.ApplyDamage(damage, hitPoint, 1f);
+        // Server determines damage — never trust client values
+        entry.Rigid.ApplyDamage(defaultDamage, hitPoint, defaultDamageRadius);
     }
 
     // ----- RPCs: Server -> Clients -----
 
     [Rpc(SendTo.NotServer)]
-    private void DemolishObjectRpc(int sceneObjectId, Vector3 hitPoint, int fragBaseId,
-        int fragCount, FragmentSnapshot[] hostFragPositions)
+    private void DemolishObjectRpc(int sceneObjectId, Vector3 hitPoint,
+        Vector3 objectPosition, Quaternion objectRotation,
+        int fragBaseId, int fragCount, FragmentSnapshot[] hostFragPositions)
     {
-        _replicator.ExecuteOnClient(sceneObjectId, hitPoint, fragBaseId, fragCount, hostFragPositions);
+        _replicator.ExecuteOnClient(sceneObjectId, hitPoint, objectPosition, objectRotation,
+            fragBaseId, fragCount, hostFragPositions);
     }
 
     [Rpc(SendTo.NotServer)]

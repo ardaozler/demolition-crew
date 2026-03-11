@@ -64,7 +64,6 @@ namespace CharacterSystem.Handlers
 
             if (InteractAction != null)
             {
-                Debug.Log("Subscribing to InteractAction.started");
                 InteractAction.started += HandleInteractStarted;
             }
         }

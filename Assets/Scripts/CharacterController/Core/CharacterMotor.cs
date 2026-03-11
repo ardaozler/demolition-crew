@@ -20,11 +20,6 @@ namespace CharacterSystem.Core
             _rb = GetComponent<Rigidbody>();
         }
 
-        public void SetHorizontalVelocity(Vector3 velocity)
-        {
-            _rb.linearVelocity = new Vector3(velocity.x, _rb.linearVelocity.y, velocity.z);
-        }
-
         public void SetVerticalVelocity(float yVelocity)
         {
             _rb.linearVelocity = new Vector3(_rb.linearVelocity.x, yVelocity, _rb.linearVelocity.z);

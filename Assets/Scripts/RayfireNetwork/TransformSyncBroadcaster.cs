@@ -17,8 +17,9 @@ public class TransformSyncBroadcaster
     private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _targets = new();
     private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _lastSent = new();
 
-    // Pre-allocated list reused each broadcast to avoid GC
+    // Pre-allocated lists reused to avoid GC
     private readonly List<FragmentSnapshot> _snapshotBuffer = new();
+    private readonly List<int> _purgeBuffer = new();
 
     public TransformSyncBroadcaster(FragmentRegistry registry, float interpSpeed = 20f)
     {
@@ -36,8 +37,11 @@ public class TransformSyncBroadcaster
             var frag = kvp.Value;
             if (frag.Transform == null) continue;
 
-            // Skip sleeping or kinematic rigidbodies — they aren't moving
-            if (frag.Rigidbody != null && (frag.Rigidbody.IsSleeping() || frag.Rigidbody.isKinematic))
+            // Skip kinematic rigidbodies — they are static scene objects
+            // NOTE: do NOT skip sleeping rigidbodies here. A fragment may have
+            // settled at a new position since the last broadcast. The delta
+            // check below already prevents re-sending unchanged positions.
+            if (frag.Rigidbody != null && frag.Rigidbody.isKinematic)
                 continue;
 
             int id = kvp.Key;
@@ -99,16 +103,16 @@ public class TransformSyncBroadcaster
     /// </summary>
     public void PurgeStale()
     {
-        var toRemove = new List<int>();
+        _purgeBuffer.Clear();
         foreach (var kvp in _targets)
         {
             if (!_registry.TryGet(kvp.Key, out var entry) || entry.Transform == null)
-                toRemove.Add(kvp.Key);
+                _purgeBuffer.Add(kvp.Key);
         }
-        for (int i = 0; i < toRemove.Count; i++)
+        for (int i = 0; i < _purgeBuffer.Count; i++)
         {
-            _targets.Remove(toRemove[i]);
-            _lastSent.Remove(toRemove[i]);
+            _targets.Remove(_purgeBuffer[i]);
+            _lastSent.Remove(_purgeBuffer[i]);
         }
     }
 }

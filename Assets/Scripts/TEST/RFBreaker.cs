@@ -3,13 +3,6 @@ using RayFire;
 using Unity.Netcode;
 using UnityEngine;
 
-/// <summary>
-/// Projectile collision handler. On impact with a Breakable object:
-///   - Networked client: sends damage request to host via RPC.
-///   - Host / standalone: applies damage directly.
-/// After impact the projectile stays alive for a short time so the physics
-/// engine can transfer its velocity/impulse to the resulting fragments.
-/// </summary>
 public class RFBreaker : MonoBehaviour
 {
     [SerializeField] private float damage = 10f;
@@ -62,19 +55,15 @@ public class RFBreaker : MonoBehaviour
         var manager = DestructionNetworkManager.Instance;
         if (manager == null) return;
 
-        RayfireRigid rigid = FindRegisteredRigid(hitObject);
+        RayfireRigid rigid = FindRegisteredRigid(manager, hitObject);
         if (rigid == null) return;
 
         if (!manager.TryGetSceneId(rigid, out int sceneId)) return;
 
         if (NetworkManager.Singleton.IsServer)
-        {
             ApplyDamageOrActivate(rigid, hitPoint);
-        }
         else
-        {
-            manager.RequestDamageRpc(sceneId, hitPoint, damage);
-        }
+            manager.RequestDamageRpc(sceneId, hitPoint);
     }
 
     private void HandleLocal(Collision other, Vector3 hitPoint)
@@ -83,13 +72,8 @@ public class RFBreaker : MonoBehaviour
             ApplyDamageOrActivate(rfRigid, hitPoint);
     }
 
-    /// <summary>
-    /// For inactive MeshRoot shards: activate directly (release from structure).
-    /// For active/dynamic objects: apply damage through RayFire's normal path.
-    /// </summary>
     private void ApplyDamageOrActivate(RayfireRigid rigid, Vector3 hitPoint)
     {
-        // Inactive shard belonging to a MeshRoot — just activate it
         if (rigid.simTp == SimType.Inactive && rigid.meshRoot != null)
         {
             rigid.Activate();
@@ -100,11 +84,8 @@ public class RFBreaker : MonoBehaviour
         rigid.ApplyDamage(damage, hitPoint, damageRadius);
     }
 
-    private static RayfireRigid FindRegisteredRigid(GameObject hitObj)
+    private static RayfireRigid FindRegisteredRigid(DestructionNetworkManager manager, GameObject hitObj)
     {
-        var manager = DestructionNetworkManager.Instance;
-        if (manager == null) return null;
-
         Transform t = hitObj.transform;
         while (t != null)
         {
@@ -114,12 +95,6 @@ public class RFBreaker : MonoBehaviour
         }
 
         return null;
-    }
-
-    private static void WakeUpIfKinematic(GameObject go)
-    {
-        if (go.TryGetComponent(out Rigidbody rb) && rb.isKinematic)
-            rb.isKinematic = false;
     }
 
     private static void WakeUpIfKinematic(RayfireRigid rigid)

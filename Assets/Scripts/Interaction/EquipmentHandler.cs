@@ -9,15 +9,23 @@ namespace InteractionSystem
     public class EquipmentHandler : NetworkBehaviour
     {
         [SerializeField] private Transform holdPoint;
+        [SerializeField] private float maxEquipRange = 4f;
+        [SerializeField] private float maxAimOriginTolerance = 2f;
 
         private InputProvider inputProvider;
         private InteractionDetector detector;
+        private Camera ownerCamera;
 
         private NetworkVariable<NetworkObjectReference> equippedItemRef = new(
             default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
         private IUsable currentUsable;
         private NetworkObject equippedNetObj;
+
+        // Server-side rate limiting
+        private float _lastUseTime;
+        private float _lastEquipTime;
+        private const float MinEquipInterval = 0.2f;
 
         public IUsable CurrentUsable => currentUsable;
         public bool HasEquipped => currentUsable != null;
@@ -26,6 +34,7 @@ namespace InteractionSystem
         {
             inputProvider = GetComponent<InputProvider>();
             detector = GetComponent<InteractionDetector>();
+            ownerCamera = GetComponentInChildren<Camera>(true);
         }
 
         public override void OnNetworkSpawn()
@@ -53,7 +62,10 @@ namespace InteractionSystem
         private void HandleUseStarted()
         {
             if (currentUsable == null) return;
-            UseServerRpc();
+
+            Vector3 origin = ownerCamera.transform.position;
+            Vector3 direction = ownerCamera.transform.forward;
+            UseServerRpc(origin, direction);
         }
 
         private void HandleUseStopped()
@@ -64,67 +76,63 @@ namespace InteractionSystem
 
         private void HandleInteract()
         {
-            Debug.Log("HandleInteract called");
-            if (currentUsable != null)
+            if (detector.CurrentTarget != null)
             {
-                UnequipServerRpc();
-            }
-            else if (detector.CurrentTarget != null)
-            {
-                Debug.Log("Current target: " + detector.CurrentTarget);
                 var targetMono = detector.CurrentTarget as MonoBehaviour;
                 if (targetMono == null) return;
 
                 var netObj = targetMono.GetComponentInParent<NetworkObject>();
                 if (netObj == null) return;
 
+                // If looking at a pickupable item, swap-equip in one press
+                // (drops current item and picks up the new one)
                 if (detector.CurrentTarget.CanInteract(gameObject))
                 {
-                    Debug.Log("Interacting with " + netObj.name);
                     EquipServerRpc(netObj);
+                    return;
                 }
             }
-        }
 
-        // --- Server RPCs ---
+            // No valid target — just drop current item
+            if (currentUsable != null)
+            {
+                UnequipServerRpc();
+            }
+        }
 
         [Rpc(SendTo.Server)]
         private void EquipServerRpc(NetworkObjectReference itemRef, RpcParams rpcParams = default)
         {
-            Debug.Log("EquipServerRpc called with itemRef: " + itemRef);
+            // Rate limit
+            if (Time.time - _lastEquipTime < MinEquipInterval) return;
+            _lastEquipTime = Time.time;
+
             if (!itemRef.TryGet(out NetworkObject itemNetObj)) return;
 
             var interactable = itemNetObj.GetComponent<IInteractable>();
             if (interactable == null || !interactable.CanInteract(gameObject)) return;
 
             var usable = itemNetObj.GetComponent<IUsable>();
-            if (usable == null)
-            {
-                Debug.Log(itemNetObj.name + " is not usable and cannot be equipped.");
+            if (usable == null) return;
+
+            // Distance check — prevent remote pickup
+            float dist = Vector3.Distance(transform.position, itemNetObj.transform.position);
+            if (dist > maxEquipRange) return;
+
+            // Verify item isn't parented to another player
+            var existingParent = itemNetObj.transform.parent;
+            if (existingParent != null && existingParent != transform)
                 return;
+
+            // Drop current item if holding something (swap-equip)
+            if (equippedItemRef.Value.TryGet(out NetworkObject oldItem))
+            {
+                Vector3 dropPos = transform.position + transform.forward * 1.5f + Vector3.up * 0.5f;
+                oldItem.TryRemoveParent();
+                DropItemClientRpc(oldItem, dropPos);
             }
 
-            Debug.Log("Equipping " + itemNetObj.name);
-
-            // Reparent to hold point
             itemNetObj.TrySetParent(NetworkObject);
-            itemNetObj.transform.localPosition =
-                holdPoint != null ? holdPoint.localPosition : new Vector3(0f, 0.5f, 0.8f);
-            itemNetObj.transform.localRotation = holdPoint != null ? holdPoint.localRotation : Quaternion.identity;
-
-            // Disable physics on picked-up item
-            var rb = itemNetObj.GetComponent<Rigidbody>();
-            if (rb != null)
-            {
-                rb.isKinematic = true;
-            }
-
-            var col = itemNetObj.GetComponent<Collider>();
-            if (col != null)
-            {
-                col.enabled = false;
-            }
-
             equippedItemRef.Value = itemNetObj;
         }
 
@@ -133,54 +141,56 @@ namespace InteractionSystem
         {
             if (!equippedItemRef.Value.TryGet(out NetworkObject itemNetObj)) return;
 
-            // Detach
+            Vector3 dropPos = transform.position + transform.forward * 1.5f + Vector3.up * 0.5f;
             itemNetObj.TryRemoveParent();
-
-            // Drop in front of player
-            itemNetObj.transform.position = transform.position + transform.forward * 1.5f + Vector3.up * 0.5f;
-            itemNetObj.transform.rotation = Quaternion.identity;
-
-            // Re-enable physics
-            var rb = itemNetObj.GetComponent<Rigidbody>();
-            if (rb != null)
-            {
-                rb.isKinematic = false;
-            }
-
-            var col = itemNetObj.GetComponent<Collider>();
-            if (col != null)
-            {
-                col.enabled = true;
-            }
-
+            DropItemClientRpc(itemNetObj, dropPos);
             equippedItemRef.Value = default;
         }
 
-        [Rpc(SendTo.Server)]
-        private void UseServerRpc()
+        [Rpc(SendTo.Everyone)]
+        private void DropItemClientRpc(NetworkObjectReference itemRef, Vector3 dropPosition)
         {
-            if (!equippedItemRef.Value.TryGet(out NetworkObject itemNetObj)) return;
+            if (!itemRef.TryGet(out NetworkObject itemNetObj)) return;
 
-            var usable = itemNetObj.GetComponent<IUsable>();
-            usable?.OnUseStarted(gameObject);
+            itemNetObj.transform.position = dropPosition;
+            itemNetObj.transform.rotation = Quaternion.identity;
+            SetItemPhysics(itemNetObj, enabled: true);
+        }
+
+        [Rpc(SendTo.Server)]
+        private void UseServerRpc(Vector3 aimOrigin, Vector3 aimDirection)
+        {
+            if (!equippedItemRef.Value.TryGet(out _)) return;
+
+            // Validate aim origin is near the player's actual position
+            float originDist = Vector3.Distance(aimOrigin, transform.position);
+            if (originDist > maxAimOriginTolerance) return;
+
+            currentUsable?.OnUseStarted(gameObject, aimOrigin, aimDirection.normalized);
         }
 
         [Rpc(SendTo.Server)]
         private void StopUseServerRpc()
         {
-            if (!equippedItemRef.Value.TryGet(out NetworkObject itemNetObj)) return;
+            if (!equippedItemRef.Value.TryGet(out _)) return;
 
-            var usable = itemNetObj.GetComponent<IUsable>();
-            usable?.OnUseStopped(gameObject);
+            currentUsable?.OnUseStopped(gameObject);
         }
 
-        // --- NetworkVariable sync for all clients ---
+        private void LateUpdate()
+        {
+            if (equippedNetObj != null && holdPoint != null)
+            {
+                equippedNetObj.transform.position = holdPoint.position;
+                equippedNetObj.transform.rotation = holdPoint.rotation;
+            }
+        }
 
         private void OnEquippedItemChanged(NetworkObjectReference oldRef, NetworkObjectReference newRef)
         {
-            // Clean up old
             if (oldRef.TryGet(out NetworkObject oldObj))
             {
+                SetItemPhysics(oldObj, enabled: true);
                 var oldUsable = oldObj.GetComponent<IUsable>();
                 oldUsable?.OnUnequip(gameObject);
             }
@@ -188,13 +198,44 @@ namespace InteractionSystem
             currentUsable = null;
             equippedNetObj = null;
 
-            // Set up new
             if (newRef.TryGet(out NetworkObject newObj))
             {
+                SetItemPhysics(newObj, enabled: false);
                 equippedNetObj = newObj;
                 currentUsable = newObj.GetComponent<IUsable>();
                 currentUsable?.OnEquip(gameObject);
             }
+        }
+
+        /// <summary>
+        /// Server-only: force-equip an item without interaction checks.
+        /// Used by tools that need to swap the equipped item (e.g. Bomb → Detonator).
+        /// </summary>
+        public void ServerForceEquip(NetworkObject item)
+        {
+            if (!IsServer) return;
+            item.TrySetParent(NetworkObject);
+            equippedItemRef.Value = item;
+        }
+
+        /// <summary>
+        /// Server-only: force-unequip the current item without dropping it.
+        /// </summary>
+        public void ServerForceUnequip()
+        {
+            if (!IsServer) return;
+            equippedItemRef.Value = default;
+        }
+
+        private static void SetItemPhysics(NetworkObject itemNetObj, bool enabled)
+        {
+            var rb = itemNetObj.GetComponent<Rigidbody>();
+            if (rb != null)
+                rb.isKinematic = !enabled;
+
+            var col = itemNetObj.GetComponent<Collider>();
+            if (col != null)
+                col.enabled = enabled;
         }
     }
 }

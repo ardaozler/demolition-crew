@@ -13,6 +13,8 @@ MonoBehaviour:
   m_Name: DefaultSledgehammerSettings
   m_EditorClassIdentifier: Assembly-CSharp::InteractionSystem.Tools.SledgehammerSettings
   damage: 50
-  hitRange: 3
-  cooldown: 0.8
+  hitRange: 2
+  damageRadius: 0.01
+  cooldown: 0.5
   hitForce: 10
+  lateralBias: 0.5

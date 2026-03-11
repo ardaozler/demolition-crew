@@ -18,6 +18,7 @@ public class FragmentRegistry
 
     private readonly Dictionary<int, TrackedFragment> _fragments = new();
     private readonly Dictionary<RayfireRigid, int> _rigidToId = new();
+    private readonly List<int> _purgeBuffer = new();
     private int _nextId;
 
     public IReadOnlyDictionary<int, TrackedFragment> All => _fragments;
@@ -92,17 +93,17 @@ public class FragmentRegistry
     /// </summary>
     public int PurgeDestroyed()
     {
-        var toRemove = new List<int>();
+        _purgeBuffer.Clear();
         foreach (var kvp in _fragments)
         {
             if (kvp.Value.Transform == null)
-                toRemove.Add(kvp.Key);
+                _purgeBuffer.Add(kvp.Key);
         }
 
-        for (int i = 0; i < toRemove.Count; i++)
-            Unregister(toRemove[i]);
+        for (int i = 0; i < _purgeBuffer.Count; i++)
+            Unregister(_purgeBuffer[i]);
 
-        return toRemove.Count;
+        return _purgeBuffer.Count;
     }
 
     public bool TryGet(int id, out TrackedFragment entry) => _fragments.TryGetValue(id, out entry);

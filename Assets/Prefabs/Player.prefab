@@ -24,12 +24,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 647362305954336846}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.4, y: 0.3, z: 0.8}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0.4, y: -0.19900006, z: 0.8}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 9160694229064326213}
+  m_Father: {fileID: 9169353034179081844}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &3832604793555260950
 GameObject:
@@ -168,7 +168,6 @@ GameObject:
   - component: {fileID: 3142869426485498622}
   - component: {fileID: 8972402557938786002}
   - component: {fileID: 5049195440429841285}
-  - component: {fileID: 8110299258741410763}
   m_Layer: 3
   m_Name: Player
   m_TagString: Player
@@ -191,7 +190,6 @@ Transform:
   m_Children:
   - {fileID: 9169353034179081844}
   - {fileID: 2199207433256338202}
-  - {fileID: 3446051071937461363}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &9167825481301483652
@@ -524,23 +522,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::InteractionSystem.EquipmentHandler
   ShowTopMostFoldoutHeaderGroup: 1
   holdPoint: {fileID: 3446051071937461363}
---- !u!114 &8110299258741410763
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5639437520369338954}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: be8f5fac18e3ba1408f2b9ebefa7808a, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ProjectileLauncher
-  projectilePrefab: {fileID: 7728979767773820801, guid: 06d869ef29d053c449b8bb3602429bfd, type: 3}
-  launchForce: 30
-  projectileLifetime: 5
-  fireRate: 0.1
-  poolSize: 100
 --- !u!1 &8614249429318449980
 GameObject:
   m_ObjectHideFlags: 0
@@ -574,7 +555,8 @@ Transform:
   m_LocalPosition: {x: 0, y: 0.499, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 3446051071937461363}
   m_Father: {fileID: 9160694229064326213}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!20 &9112638854462744296

@@ -45,17 +45,11 @@ namespace CharacterSystem.Handlers
                 : movementSettings.Deceleration;
 
             if (!groundDetector.IsGrounded)
-            {
                 accel *= movementSettings.AirControlMultiplier;
-            }
 
-            Vector3 newHorizontal = Vector3.MoveTowards(
-                currentHorizontal,
-                targetVelocity,
-                accel * Time.fixedDeltaTime
-            );
-
-            motor.SetHorizontalVelocity(newHorizontal);
+            Vector3 velocityDelta = targetVelocity - currentHorizontal;
+            Vector3 correction = Vector3.ClampMagnitude(velocityDelta, accel * Time.fixedDeltaTime);
+            motor.AddForce(correction, ForceMode.VelocityChange);
         }
     }
 }

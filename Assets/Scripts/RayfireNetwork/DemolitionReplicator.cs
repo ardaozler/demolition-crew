@@ -11,6 +11,8 @@ public class DemolitionReplicator
         public int FragmentBaseId;
         public Vector3 HitPoint;
         public int FragmentCount;
+        public Vector3 ObjectPosition;
+        public Quaternion ObjectRotation;
         public FragmentSnapshot[] FragmentPositions;
     }
 
@@ -67,16 +69,19 @@ public class DemolitionReplicator
             FragmentBaseId = fragBaseId,
             FragmentCount = fragmentCount,
             HitPoint = demolished.lim.contactVector3,
+            ObjectPosition = demolished.transform.position,
+            ObjectRotation = demolished.transform.rotation,
             FragmentPositions = fragPositions,
         };
 
         _pendingRecords.Enqueue(record);
     }
 
-    public void ExecuteOnClient(int sceneObjectId, Vector3 hitPoint, int fragBaseId,
-        int fragCount, FragmentSnapshot[] hostFragPositions)
+    public void ExecuteOnClient(int sceneObjectId, Vector3 hitPoint,
+        Vector3 objectPosition, Quaternion objectRotation,
+        int fragBaseId, int fragCount, FragmentSnapshot[] hostFragPositions)
     {
-        if (!_registry.TryGet(sceneObjectId, out var entry) || entry.Rigid == null)
+        if (!_registry.TryGet(sceneObjectId, out var entry))
         {
             Debug.LogWarning(
                 $"[DemolitionReplicator] Received demolition for unknown object ID {sceneObjectId}.");
@@ -84,6 +89,30 @@ public class DemolitionReplicator
         }
 
         var rigid = entry.Rigid;
+
+        // Sub-fragments registered via RegisterTransformOnly have Rigid = null.
+        // Recover the component from the GameObject so we can demolish again.
+        if (rigid == null && entry.Transform != null)
+        {
+            rigid = entry.Transform.GetComponent<RayfireRigid>();
+            if (rigid == null)
+            {
+                Debug.LogWarning(
+                    $"[DemolitionReplicator] No RayfireRigid on object ID {sceneObjectId}.");
+                return;
+            }
+        }
+
+        // Teleport the client object to match the host's position at demolition
+        // time. The object may have moved on the host (e.g. from hit impulses)
+        // while the client copy stayed kinematic at its original position.
+        rigid.transform.position = objectPosition;
+        rigid.transform.rotation = objectRotation;
+
+        // DisableClientPhysics sets dmlTp = None on all client objects.
+        // Restore it so DemolishForced actually produces fragments.
+        rigid.dmlTp = DemolitionType.Runtime;
+
         rigid.lim.contactVector3 = hitPoint;
         rigid.lim.demolitionShould = true;
 
@@ -91,7 +120,6 @@ public class DemolitionReplicator
 
         _registry.Unregister(sceneObjectId);
 
-        // Register client fragments matched to host fragment IDs by nearest position
         if (rigid.HasFragments && hostFragPositions != null && hostFragPositions.Length > 0)
         {
             RegisterClientFragments(rigid.fragments, hostFragPositions);
@@ -128,7 +156,6 @@ public class DemolitionReplicator
                 used[bestIdx] = true;
                 var clientFrag = clientFragments[bestIdx];
 
-                // Disable local physics — host drives these via transform sync
                 clientFrag.dmlTp = DemolitionType.None;
                 var rb = clientFrag.GetComponent<Rigidbody>();
                 if (rb != null)
@@ -137,8 +164,21 @@ public class DemolitionReplicator
                     rb.interpolation = RigidbodyInterpolation.None;
                 }
 
+                // Snap to host position immediately so there's no visual gap
+                // until the next transform sync arrives
+                clientFrag.transform.position = hostSnap.Position;
+                clientFrag.transform.rotation = hostSnap.Rotation;
+
                 _registry.RegisterTransformOnly(hostSnap.Id, clientFrag.transform, rb);
             }
+        }
+
+        // Destroy unmatched client fragments — they have no host counterpart
+        // and would sit as frozen orphaned chunks
+        for (int c = 0; c < clientFragments.Count; c++)
+        {
+            if (!used[c])
+                Object.Destroy(clientFragments[c].gameObject);
         }
     }
 }
