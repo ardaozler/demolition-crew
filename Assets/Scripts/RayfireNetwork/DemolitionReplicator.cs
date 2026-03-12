@@ -16,10 +16,15 @@ public class DemolitionReplicator
         public FragmentSnapshot[] FragmentPositions;
     }
 
+    private const int MaxHistorySize = 512;
+
     private readonly FragmentRegistry _registry;
     private readonly Queue<DemolitionRecord> _pendingRecords = new();
+    private readonly List<DemolitionRecord> _demolitionHistory = new();
     private readonly bool _isHost;
     private bool _needsKinematicEnforcement;
+
+    public IReadOnlyList<DemolitionRecord> DemolitionHistory => _demolitionHistory;
 
     public DemolitionReplicator(FragmentRegistry registry, bool isHost)
     {
@@ -76,6 +81,11 @@ public class DemolitionReplicator
         };
 
         _pendingRecords.Enqueue(record);
+        _demolitionHistory.Add(record);
+
+        // Cap history to prevent unbounded memory growth
+        if (_demolitionHistory.Count > MaxHistorySize)
+            _demolitionHistory.RemoveAt(0);
     }
 
     public void ExecuteOnClient(int sceneObjectId, Vector3 hitPoint,
@@ -123,6 +133,13 @@ public class DemolitionReplicator
 
         if (rigid.HasFragments && hostFragPositions != null && hostFragPositions.Length > 0)
         {
+            if (rigid.fragments.Count != hostFragPositions.Length)
+            {
+                Debug.LogWarning(
+                    $"[DemolitionReplicator] Fragment count mismatch for object {sceneObjectId}: " +
+                    $"host={hostFragPositions.Length}, client={rigid.fragments.Count}");
+            }
+
             RegisterClientFragments(rigid.fragments, hostFragPositions);
         }
 
@@ -150,12 +167,30 @@ public class DemolitionReplicator
             }
         }
     }
+    
 
     /// <summary>
-    /// Match client fragments to host fragment IDs using nearest-position greedy matching,
-    /// then register them and make them kinematic (clients don't simulate physics).
+    /// Match client fragments to host fragment IDs, register them, and make them kinematic.
+    /// When counts match, uses index-based matching (RayFire produces deterministic fragment
+    /// order for the same mesh when position/rotation match). Falls back to greedy
+    /// nearest-position matching when counts differ.
     /// </summary>
     private void RegisterClientFragments(List<RayfireRigid> clientFragments, FragmentSnapshot[] hostPositions)
+    {
+        if (clientFragments.Count == hostPositions.Length)
+        {
+            // Counts match — use direct index mapping (deterministic RayFire output)
+            for (int i = 0; i < hostPositions.Length; i++)
+                RegisterAndSnapFragment(clientFragments[i], hostPositions[i]);
+        }
+        else
+        {
+            // Counts differ — fall back to greedy nearest-position matching
+            RegisterClientFragmentsProximity(clientFragments, hostPositions);
+        }
+    }
+
+    private void RegisterClientFragmentsProximity(List<RayfireRigid> clientFragments, FragmentSnapshot[] hostPositions)
     {
         var used = new bool[clientFragments.Count];
 
@@ -179,31 +214,33 @@ public class DemolitionReplicator
             if (bestIdx >= 0)
             {
                 used[bestIdx] = true;
-                var clientFrag = clientFragments[bestIdx];
-
-                clientFrag.dmlTp = DemolitionType.None;
-                var rb = clientFrag.GetComponent<Rigidbody>();
-                if (rb != null)
-                {
-                    rb.isKinematic = true;
-                    rb.interpolation = RigidbodyInterpolation.None;
-                }
-
-                // Snap to host position immediately so there's no visual gap
-                // until the next transform sync arrives
-                clientFrag.transform.position = hostSnap.Position;
-                clientFrag.transform.rotation = hostSnap.Rotation;
-
-                _registry.RegisterTransformOnly(hostSnap.Id, clientFrag.transform, rb);
+                RegisterAndSnapFragment(clientFragments[bestIdx], hostPositions[h]);
             }
         }
 
         // Destroy unmatched client fragments — they have no host counterpart
-        // and would sit as frozen orphaned chunks
         for (int c = 0; c < clientFragments.Count; c++)
         {
             if (!used[c])
                 Object.Destroy(clientFragments[c].gameObject);
         }
+    }
+
+    private void RegisterAndSnapFragment(RayfireRigid clientFrag, FragmentSnapshot hostSnap)
+    {
+        clientFrag.dmlTp = DemolitionType.None;
+        var rb = clientFrag.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.isKinematic = true;
+            rb.interpolation = RigidbodyInterpolation.None;
+        }
+
+        // Snap to host position immediately so there's no visual gap
+        // until the next transform sync arrives
+        clientFrag.transform.position = hostSnap.Position;
+        clientFrag.transform.rotation = hostSnap.Rotation;
+
+        _registry.RegisterTransformOnly(hostSnap.Id, clientFrag.transform, rb);
     }
 }

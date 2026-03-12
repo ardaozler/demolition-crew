@@ -11,19 +11,13 @@ namespace InteractionSystem
         [SerializeField] private LayerMask hitMask = ~0;
 
         private float lastSwingTime;
-        private GameObject owner;
+        private NetworkObject _cachedNetObj;
 
         public string UsableName => "Sledgehammer";
 
-        public void OnEquip(GameObject equipOwner)
-        {
-            owner = equipOwner;
-        }
+        public void OnEquip(GameObject equipOwner) { }
 
-        public void OnUnequip(GameObject equipOwner)
-        {
-            owner = null;
-        }
+        public void OnUnequip(GameObject equipOwner) { }
 
         public void OnUseStarted(GameObject equipOwner, Vector3 aimOrigin, Vector3 aimDirection)
         {
@@ -31,7 +25,6 @@ namespace InteractionSystem
             if (Time.time - lastSwingTime < settings.Cooldown) return;
 
             lastSwingTime = Time.time;
-            SwingClientRpc();
 
             if (Physics.Raycast(aimOrigin, aimDirection, out RaycastHit hit, settings.HitRange, hitMask))
             {
@@ -47,7 +40,6 @@ namespace InteractionSystem
                     rb.AddForceAtPosition(forceDir * settings.HitForce, hit.point, ForceMode.Impulse);
                 }
 
-                HitClientRpc(hit.point, hit.normal);
             }
         }
 
@@ -55,23 +47,16 @@ namespace InteractionSystem
 
         public string InteractionPrompt => "Pick up Sledgehammer";
 
+        private void Awake()
+        {
+            _cachedNetObj = GetComponent<NetworkObject>();
+        }
+
         public bool CanInteract(GameObject player)
         {
-            return transform.parent == null || GetComponentInParent<NetworkObject>() == GetComponent<NetworkObject>();
+            return transform.parent == null || GetComponentInParent<NetworkObject>() == _cachedNetObj;
         }
 
         public void Interact(GameObject player) { }
-
-        [Rpc(SendTo.Everyone)]
-        private void SwingClientRpc()
-        {
-            // TODO: swing animation / sound
-        }
-
-        [Rpc(SendTo.Everyone)]
-        private void HitClientRpc(Vector3 hitPoint, Vector3 hitNormal)
-        {
-            // TODO: hit VFX / impact sound
-        }
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using RayFire;
 using Unity.Netcode;
@@ -14,14 +15,25 @@ public class DestructionNetworkManager : NetworkBehaviour
     [Header("Cleanup")]
     [SerializeField] private float purgeIntervalSeconds = 5f;
 
+    [Header("Damage Settings")]
+    [SerializeField] private float defaultDamage = 10f;
+    [SerializeField] private float defaultDamageRadius = 1f;
+    [SerializeField] private float maxDamageRange = 10f;
+    [SerializeField] private float damageRpcCooldown = 0.05f;
+
     private FragmentRegistry _registry;
     private DemolitionReplicator _replicator;
     private TransformSyncBroadcaster _broadcaster;
+    private DamageHandler _damageHandler;
     private int _fixedFrameCounter;
     private float _purgeTimer;
     private bool _initialized;
 
+    private readonly HashSet<ulong> _hydratedClients = new();
+
     public FragmentRegistry Registry => _registry;
+    public DemolitionReplicator Replicator => _replicator;
+    public TransformSyncBroadcaster Broadcaster => _broadcaster;
 
     public override void OnNetworkSpawn()
     {
@@ -31,8 +43,8 @@ public class DestructionNetworkManager : NetworkBehaviour
             return;
         }
 
-        Instance = this;
-
+        // Initialize subsystems BEFORE setting Instance so any code that
+        // accesses DestructionNetworkManager.Instance sees a fully initialized object.
         _registry = new FragmentRegistry();
         _registry.RegisterSceneObjects();
 
@@ -40,41 +52,82 @@ public class DestructionNetworkManager : NetworkBehaviour
         _replicator.SubscribeToEvents();
 
         _broadcaster = new TransformSyncBroadcaster(_registry, interpolationSpeed);
+        _damageHandler = new DamageHandler(_registry, defaultDamage, defaultDamageRadius,
+            maxDamageRange, damageRpcCooldown);
 
         if (!IsServer)
             DisableClientPhysics();
 
+        if (IsServer)
+            NetworkManager.OnClientDisconnectCallback += OnClientDisconnect;
+
         _initialized = true;
+        Instance = this;
+
+        // Late-joining client requests state hydration from the host
+        if (!IsServer)
+            RequestHydrationRpc();
     }
 
     public override void OnNetworkDespawn()
     {
         _replicator?.UnsubscribeFromEvents();
+
+        if (IsServer && NetworkManager != null)
+            NetworkManager.OnClientDisconnectCallback -= OnClientDisconnect;
+
         if (Instance == this) Instance = null;
+    }
+
+    private void OnClientDisconnect(ulong clientId)
+    {
+        _damageHandler.RemoveClient(clientId);
+        _hydratedClients.Remove(clientId);
     }
 
     private void FixedUpdate()
     {
-        if (!_initialized || !IsServer) return;
+        if (!_initialized || !IsServer || !IsSpawned) return;
 
-        FlushDemolitions();
+        try
+        {
+            FlushDemolitions();
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+        }
 
         _fixedFrameCounter++;
         if (_fixedFrameCounter >= broadcastEveryNthFixedFrame)
         {
             _fixedFrameCounter = 0;
-            BroadcastTransforms();
+            try
+            {
+                BroadcastTransforms();
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
         }
     }
 
     private void Update()
     {
-        if (!_initialized) return;
+        if (!_initialized || !IsSpawned) return;
 
         if (!IsServer)
         {
-            _broadcaster.InterpolateClient(Time.deltaTime);
-            _replicator.FlushKinematicEnforcement();
+            try
+            {
+                _broadcaster.InterpolateClient(Time.deltaTime);
+                _replicator.FlushKinematicEnforcement();
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
         }
 
         // Periodic cleanup of destroyed fragments
@@ -115,47 +168,18 @@ public class DestructionNetworkManager : NetworkBehaviour
 
     // ----- RPCs: Client -> Server -----
 
-    [Header("Damage Settings")]
-    [SerializeField] private float defaultDamage = 10f;
-    [SerializeField] private float defaultDamageRadius = 1f;
-    [SerializeField] private float maxDamageRange = 10f;
-    [SerializeField] private float damageRpcCooldown = 0.05f;
-
-    private readonly Dictionary<ulong, float> _lastDamageTime = new();
-
     [Rpc(SendTo.Server)]
     public void RequestDamageRpc(int sceneObjectId, Vector3 hitPoint, RpcParams rpcParams = default)
     {
-        // Rate limit per client
-        ulong senderId = rpcParams.Receive.SenderClientId;
-        if (_lastDamageTime.TryGetValue(senderId, out float lastTime) &&
-            Time.time - lastTime < damageRpcCooldown)
-            return;
-        _lastDamageTime[senderId] = Time.time;
-
-        if (!_registry.TryGet(sceneObjectId, out var entry) || entry.Rigid == null)
-            return;
-
-        // Distance check — sender must be near the target
-        if (NetworkManager.ConnectedClients.TryGetValue(senderId, out var client) &&
-            client.PlayerObject != null)
+        try
         {
-            float dist = Vector3.Distance(client.PlayerObject.transform.position, hitPoint);
-            if (dist > maxDamageRange) return;
+            ulong senderId = rpcParams.Receive.SenderClientId;
+            _damageHandler.ProcessDamageRequest(sceneObjectId, hitPoint, senderId, NetworkManager);
         }
-
-        // Inactive MeshRoot shard — activate directly
-        if (entry.Rigid.simTp == SimType.Inactive && entry.Rigid.meshRoot != null)
+        catch (Exception e)
         {
-            entry.Rigid.Activate();
-            return;
+            Debug.LogException(e);
         }
-
-        if (entry.Rigidbody != null && entry.Rigidbody.isKinematic)
-            entry.Rigidbody.isKinematic = false;
-
-        // Server determines damage — never trust client values
-        entry.Rigid.ApplyDamage(defaultDamage, hitPoint, defaultDamageRadius);
     }
 
     // ----- RPCs: Server -> Clients -----
@@ -165,14 +189,104 @@ public class DestructionNetworkManager : NetworkBehaviour
         Vector3 objectPosition, Quaternion objectRotation,
         int fragBaseId, int fragCount, FragmentSnapshot[] hostFragPositions)
     {
-        _replicator.ExecuteOnClient(sceneObjectId, hitPoint, objectPosition, objectRotation,
-            fragBaseId, fragCount, hostFragPositions);
+        try
+        {
+            _replicator.ExecuteOnClient(sceneObjectId, hitPoint, objectPosition, objectRotation,
+                fragBaseId, fragCount, hostFragPositions);
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+        }
     }
 
     [Rpc(SendTo.NotServer)]
     private void SyncTransformsRpc(FragmentSnapshot[] snapshots)
     {
-        _broadcaster.ReceiveSnapshots(snapshots);
+        try
+        {
+            _broadcaster.ReceiveSnapshots(snapshots);
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+        }
+    }
+
+    // ----- Late-join hydration -----
+
+    [Rpc(SendTo.Server)]
+    private void RequestHydrationRpc(RpcParams rpcParams = default)
+    {
+        ulong clientId = rpcParams.Receive.SenderClientId;
+
+        // One-shot: ignore duplicate hydration requests
+        if (!_hydratedClients.Add(clientId)) return;
+
+        try
+        {
+            var history = _replicator.DemolitionHistory;
+
+            if (history.Count == 0) return;
+
+            Debug.Log($"[DestructionNetworkManager] Sending {history.Count} demolition records to client {clientId}.");
+
+            for (int i = 0; i < history.Count; i++)
+            {
+                var record = history[i];
+                HydrateClientRpc(
+                    record.SceneObjectId,
+                    record.HitPoint,
+                    record.ObjectPosition,
+                    record.ObjectRotation,
+                    record.FragmentBaseId,
+                    record.FragmentCount,
+                    record.FragmentPositions,
+                    RpcTarget.Single(clientId, RpcTargetUse.Temp));
+            }
+
+            // Send current transform state so fragments appear at their resting positions,
+            // not at their mid-air demolition-time positions.
+            var snapshots = _broadcaster.CaptureFullState();
+            if (snapshots.Length > 0)
+            {
+                HydrateTransformsRpc(snapshots, RpcTarget.Single(clientId, RpcTargetUse.Temp));
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+        }
+    }
+
+    [Rpc(SendTo.SpecifiedInParams)]
+    private void HydrateTransformsRpc(FragmentSnapshot[] snapshots, RpcParams rpcParams = default)
+    {
+        try
+        {
+            _broadcaster.ReceiveSnapshots(snapshots);
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+        }
+    }
+
+    [Rpc(SendTo.SpecifiedInParams)]
+    private void HydrateClientRpc(int sceneObjectId, Vector3 hitPoint,
+        Vector3 objectPosition, Quaternion objectRotation,
+        int fragBaseId, int fragCount, FragmentSnapshot[] hostFragPositions,
+        RpcParams rpcParams = default)
+    {
+        try
+        {
+            _replicator.ExecuteOnClient(sceneObjectId, hitPoint, objectPosition, objectRotation,
+                fragBaseId, fragCount, hostFragPositions);
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+        }
     }
 
     // ----- Client initialization -----

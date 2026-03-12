@@ -13,6 +13,7 @@ namespace InteractionSystem
         [SerializeField] private GameObject detonatorPrefab;
 
         private Rigidbody rb;
+        private NetworkObject _cachedNetObj;
         private NetworkObject activeDetonatorNet;
         private EquipmentHandler detonatorHolder;
         private bool detonated;
@@ -26,6 +27,7 @@ namespace InteractionSystem
         private void Awake()
         {
             rb = GetComponent<Rigidbody>();
+            _cachedNetObj = GetComponent<NetworkObject>();
         }
 
         public void OnEquip(GameObject equipOwner)
@@ -88,7 +90,6 @@ namespace InteractionSystem
                 handler.ServerForceEquip(activeDetonatorNet);
             }
 
-            ThrowRpc(aimOrigin + aimDirection * 0.5f, aimDirection);
         }
 
         public void OnUseStopped(GameObject equipOwner) { }
@@ -96,7 +97,7 @@ namespace InteractionSystem
         public bool CanInteract(GameObject player)
         {
             if (!thrown.Value)
-                return transform.parent == null || GetComponentInParent<NetworkObject>() == GetComponent<NetworkObject>();
+                return transform.parent == null || GetComponentInParent<NetworkObject>() == _cachedNetObj;
 
             // Thrown bomb can be picked back up
             return true;
@@ -129,10 +130,8 @@ namespace InteractionSystem
 
             rfBomb.Explode(0f);
 
-            Object.Destroy(bombGo);
-
-            // Send RPCs BEFORE despawning so clients receive them
-            ExplodeRpc(transform.position);
+            // Delay destroy to let RayfireBomb finish any deferred physics work
+            Object.Destroy(bombGo, 0.1f);
 
             activeDetonatorNet = null;
             detonatorHolder = null;
@@ -149,16 +148,5 @@ namespace InteractionSystem
             detonatorHolder = null;
         }
 
-        [Rpc(SendTo.Everyone)]
-        private void ThrowRpc(Vector3 position, Vector3 direction)
-        {
-            // TODO: throw sound / trail VFX
-        }
-
-        [Rpc(SendTo.Everyone)]
-        private void ExplodeRpc(Vector3 position)
-        {
-            // TODO: explosion VFX / sound
-        }
     }
 }

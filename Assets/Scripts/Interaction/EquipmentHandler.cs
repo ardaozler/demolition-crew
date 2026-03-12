@@ -63,6 +63,7 @@ namespace InteractionSystem
         private void HandleUseStarted()
         {
             if (currentUsable == null) return;
+            if (ownerCamera == null) return;
 
             Vector3 origin = ownerCamera.transform.position;
             Vector3 direction = ownerCamera.transform.forward;
@@ -133,7 +134,10 @@ namespace InteractionSystem
                 DropItemClientRpc(oldItem, dropPos);
             }
 
-            itemNetObj.TrySetParent(NetworkObject);
+            // Claim the item — if TrySetParent fails, another player won the race
+            if (!itemNetObj.TrySetParent(NetworkObject))
+                return;
+
             equippedItemRef.Value = itemNetObj;
         }
 
@@ -161,7 +165,7 @@ namespace InteractionSystem
         [Rpc(SendTo.Server)]
         private void UseServerRpc(Vector3 aimOrigin, Vector3 aimDirection)
         {
-            if (!equippedItemRef.Value.TryGet(out _)) return;
+            if (!equippedItemRef.Value.TryGet(out NetworkObject itemObj)) return;
 
             // Rate limit
             if (Time.time - _lastUseTime < MinUseInterval) return;
@@ -171,19 +175,26 @@ namespace InteractionSystem
             float originDist = Vector3.Distance(aimOrigin, transform.position);
             if (originDist > maxAimOriginTolerance) return;
 
-            currentUsable?.OnUseStarted(gameObject, aimOrigin, aimDirection.normalized);
+            // Reject degenerate aim directions (zero/near-zero → NaN after normalize)
+            if (aimDirection.sqrMagnitude < 0.01f) return;
+
+            // Derive usable directly from the equipped item to avoid stale currentUsable
+            var usable = itemObj.GetComponent<IUsable>();
+            usable?.OnUseStarted(gameObject, aimOrigin, aimDirection.normalized);
         }
 
         [Rpc(SendTo.Server)]
         private void StopUseServerRpc()
         {
-            if (!equippedItemRef.Value.TryGet(out _)) return;
+            if (!equippedItemRef.Value.TryGet(out NetworkObject itemObj)) return;
 
-            currentUsable?.OnUseStopped(gameObject);
+            var usable = itemObj.GetComponent<IUsable>();
+            usable?.OnUseStopped(gameObject);
         }
 
         private void LateUpdate()
         {
+            if (!IsOwner) return;
             if (equippedNetObj != null && holdPoint != null)
             {
                 equippedNetObj.transform.position = holdPoint.position;
@@ -229,6 +240,10 @@ namespace InteractionSystem
         public void ServerForceUnequip()
         {
             if (!IsServer) return;
+
+            if (equippedItemRef.Value.TryGet(out NetworkObject item))
+                item.TryRemoveParent();
+
             equippedItemRef.Value = default;
         }
 

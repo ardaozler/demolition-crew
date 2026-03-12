@@ -10,6 +10,7 @@ public class NetworkPlayerSetup : NetworkBehaviour
         if (IsOwner) return;
 
         DisableComponent<InputProvider>();
+        DisableComponent<InteractionSystem.InteractionDetector>();
         DisableComponent<FirstPersonCamera>(searchChildren: true);
         DisableComponent<CameraInputProvider>(searchChildren: true);
         DisableComponent<UnityEngine.Camera>(searchChildren: true);

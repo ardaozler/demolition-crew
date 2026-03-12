@@ -7,9 +7,15 @@ namespace InteractionSystem
     public class Detonator : NetworkBehaviour, IUsable, IInteractable
     {
         private Bomb linkedBomb;
+        private NetworkObject _cachedNetObj;
 
         public string UsableName => "Detonator";
         public string InteractionPrompt => "Pick up Detonator";
+
+        private void Awake()
+        {
+            _cachedNetObj = GetComponent<NetworkObject>();
+        }
 
         public void SetBomb(Bomb bomb)
         {
@@ -48,7 +54,7 @@ namespace InteractionSystem
 
         public bool CanInteract(GameObject player)
         {
-            return transform.parent == null || GetComponentInParent<NetworkObject>() == GetComponent<NetworkObject>();
+            return transform.parent == null || GetComponentInParent<NetworkObject>() == _cachedNetObj;
         }
 
         public void Interact(GameObject player) { }

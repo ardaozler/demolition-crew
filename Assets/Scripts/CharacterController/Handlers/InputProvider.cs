@@ -41,6 +41,12 @@ namespace CharacterSystem.Handlers
             }
 
             actionMap = inputActions.FindActionMap(actionMapName);
+            if (actionMap == null)
+            {
+                Debug.LogError($"InputProvider: Action map '{actionMapName}' not found!", this);
+                enabled = false;
+                return;
+            }
             MoveAction = actionMap.FindAction(moveActionName);
             JumpAction = actionMap.FindAction(jumpActionName);
             UseAction = actionMap.FindAction(useActionName);

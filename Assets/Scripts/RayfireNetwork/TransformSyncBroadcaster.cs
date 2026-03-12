@@ -4,22 +4,32 @@ using UnityEngine;
 /// <summary>
 /// Every N fixed frames, gathers transform snapshots from the FragmentRegistry and broadcasts them to clients.
 /// Only sends fragments that have moved beyond a threshold (delta compression).
-/// Skips sleeping rigidbodies to save bandwidth.
+/// Does NOT skip sleeping rigidbodies — they may have settled at new positions since last broadcast.
 /// </summary>
 public class TransformSyncBroadcaster
 {
     private const float PositionThresholdSqr = 0.0025f; // 0.05 units
     private const float RotationThreshold = 1f;          // 1 degree
+    private const float ConvergenceThresholdSqr = 0.0001f; // 0.01 units — close enough to stop interpolating
 
     private readonly FragmentRegistry _registry;
     private readonly float _interpSpeed;
 
-    private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _targets = new();
+    // Client-side interpolation: flat list for GC-free iteration
+    private readonly List<int> _activeTargetIds = new();
+    private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _targetMap = new();
+
+    // Host-side delta compression
     private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _lastSent = new();
 
     // Pre-allocated buffers reused to avoid GC
     private readonly List<FragmentSnapshot> _snapshotBuffer = new();
     private readonly List<int> _purgeBuffer = new();
+    private FragmentSnapshot[] _snapshotArray = System.Array.Empty<FragmentSnapshot>();
+
+    // Stats for debug display
+    public int InterpolationTargetCount => _activeTargetIds.Count;
+    public int LastBroadcastCount => _snapshotArray.Length;
 
     public TransformSyncBroadcaster(FragmentRegistry registry, float interpSpeed = 20f)
     {
@@ -60,14 +70,59 @@ public class TransformSyncBroadcaster
             _snapshotBuffer.Add(new FragmentSnapshot(id, pos, rot));
         }
 
-        return _snapshotBuffer.Count > 0 ? _snapshotBuffer.ToArray() : System.Array.Empty<FragmentSnapshot>();
+        if (_snapshotBuffer.Count == 0)
+            return System.Array.Empty<FragmentSnapshot>();
+
+        // Reuse array if size matches; only reallocate when count changes
+        int count = _snapshotBuffer.Count;
+        if (_snapshotArray.Length != count)
+            _snapshotArray = new FragmentSnapshot[count];
+
+        for (int i = 0; i < count; i++)
+            _snapshotArray[i] = _snapshotBuffer[i];
+
+        return _snapshotArray;
+    }
+
+    /// <summary>
+    /// Captures ALL registered non-kinematic fragment positions, ignoring delta compression.
+    /// Used for late-join hydration so clients see current resting positions.
+    /// </summary>
+    public FragmentSnapshot[] CaptureFullState()
+    {
+        _snapshotBuffer.Clear();
+        var all = _registry.All;
+
+        foreach (var kvp in all)
+        {
+            var frag = kvp.Value;
+            if (frag.Transform == null) continue;
+            if (frag.Rigidbody != null && frag.Rigidbody.isKinematic) continue;
+
+            _snapshotBuffer.Add(new FragmentSnapshot(kvp.Key, frag.Transform.position, frag.Transform.rotation));
+        }
+
+        if (_snapshotBuffer.Count == 0)
+            return System.Array.Empty<FragmentSnapshot>();
+
+        var result = new FragmentSnapshot[_snapshotBuffer.Count];
+        for (int i = 0; i < _snapshotBuffer.Count; i++)
+            result[i] = _snapshotBuffer[i];
+
+        return result;
     }
 
     public void ReceiveSnapshots(FragmentSnapshot[] snapshots)
     {
         for (int i = 0; i < snapshots.Length; i++)
         {
-            _targets[snapshots[i].Id] = (snapshots[i].Position, snapshots[i].Rotation);
+            int id = snapshots[i].Id;
+            var target = (snapshots[i].Position, snapshots[i].Rotation);
+            _targetMap[id] = target;
+
+            // Add to active list if not already tracked
+            if (!_activeTargetIds.Contains(id))
+                _activeTargetIds.Add(id);
         }
     }
 
@@ -75,15 +130,30 @@ public class TransformSyncBroadcaster
     {
         float t = 1f - Mathf.Exp(-_interpSpeed * deltaTime);
 
-        foreach (var kvp in _targets)
+        // Iterate flat list backwards so we can swap-remove converged entries
+        for (int i = _activeTargetIds.Count - 1; i >= 0; i--)
         {
-            if (!_registry.TryGet(kvp.Key, out var entry) || entry.Transform == null)
+            int id = _activeTargetIds[i];
+
+            if (!_registry.TryGet(id, out var entry) || entry.Transform == null)
+            {
+                // Fragment gone — remove from active list
+                SwapRemove(_activeTargetIds, i);
+                _targetMap.Remove(id);
                 continue;
+            }
 
-            var target = kvp.Value;
+            if (!_targetMap.TryGetValue(id, out var target))
+            {
+                SwapRemove(_activeTargetIds, i);
+                continue;
+            }
 
-            var newPos = Vector3.Lerp(entry.Transform.position, target.pos, t);
-            var newRot = Quaternion.Slerp(entry.Transform.rotation, target.rot, t);
+            var curPos = entry.Transform.position;
+            var curRot = entry.Transform.rotation;
+
+            var newPos = Vector3.Lerp(curPos, target.pos, t);
+            var newRot = Quaternion.Slerp(curRot, target.rot, t);
 
             if (entry.Rigidbody != null)
             {
@@ -95,6 +165,14 @@ public class TransformSyncBroadcaster
                 entry.Transform.position = newPos;
                 entry.Transform.rotation = newRot;
             }
+
+            // If converged, stop interpolating until a new snapshot arrives
+            if ((newPos - target.pos).sqrMagnitude < ConvergenceThresholdSqr &&
+                Quaternion.Angle(newRot, target.rot) < 0.5f)
+            {
+                SwapRemove(_activeTargetIds, i);
+                _targetMap.Remove(id);
+            }
         }
     }
 
@@ -105,16 +183,15 @@ public class TransformSyncBroadcaster
     {
         _purgeBuffer.Clear();
 
-        // Purge targets (client-side)
-        foreach (var kvp in _targets)
+        // Purge active targets (client-side)
+        for (int i = _activeTargetIds.Count - 1; i >= 0; i--)
         {
-            if (!_registry.TryGet(kvp.Key, out var entry) || entry.Transform == null)
-                _purgeBuffer.Add(kvp.Key);
-        }
-        for (int i = 0; i < _purgeBuffer.Count; i++)
-        {
-            _targets.Remove(_purgeBuffer[i]);
-            _lastSent.Remove(_purgeBuffer[i]);
+            int id = _activeTargetIds[i];
+            if (!_registry.TryGet(id, out var entry) || entry.Transform == null)
+            {
+                SwapRemove(_activeTargetIds, i);
+                _targetMap.Remove(id);
+            }
         }
 
         // Purge _lastSent for fragments no longer in the registry or now kinematic (host-side)
@@ -128,5 +205,13 @@ public class TransformSyncBroadcaster
         }
         for (int i = 0; i < _purgeBuffer.Count; i++)
             _lastSent.Remove(_purgeBuffer[i]);
+    }
+
+    private static void SwapRemove(List<int> list, int index)
+    {
+        int last = list.Count - 1;
+        if (index < last)
+            list[index] = list[last];
+        list.RemoveAt(last);
     }
 }

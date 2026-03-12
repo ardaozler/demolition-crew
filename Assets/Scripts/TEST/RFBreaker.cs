@@ -9,7 +9,9 @@ public class RFBreaker : MonoBehaviour
     [SerializeField] private float damageRadius = 1f;
     [SerializeField] private int poolDelayFrames = 2;
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
     [HideInInspector] public ProjectileLauncher launcher;
+#endif
 
     private readonly ContactPoint[] _contactBuffer = new ContactPoint[1];
     private bool _hit;
@@ -46,8 +48,10 @@ public class RFBreaker : MonoBehaviour
         for (int i = 0; i < poolDelayFrames; i++)
             yield return new WaitForFixedUpdate();
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
         if (launcher != null)
             launcher.ReturnToPool(gameObject);
+#endif
     }
 
     private void HandleNetworked(GameObject hitObject, Vector3 hitPoint)

@@ -34,7 +34,9 @@ public class FragmentRegistry
 
         foreach (var rigid in allRigids)
         {
+            //skip meshroots
             if (rigid.objTp == ObjectType.MeshRoot) continue;
+            //skip non-demolishable objects without fragments
             if (rigid.dmlTp == DemolitionType.None && rigid.meshRoot == null) continue;
 
             int id = _nextId++;
@@ -66,6 +68,7 @@ public class FragmentRegistry
         _rigidToId[rigid] = id;
     }
 
+    //only for clients to sync with the host, since after the client replays the demolition, the fragments will already exist and have no RayfireRigid component. The registry just needs to track their transforms and rigidbodies for kinematic enforcement.
     public void RegisterTransformOnly(int id, Transform tf, Rigidbody rb)
     {
         var entry = new TrackedFragment

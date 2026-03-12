@@ -6,10 +6,11 @@ using UnityEngine.InputSystem;
 
 /// <summary>
 /// Debug/test tool — not intended for shipping builds.
+/// Compile-gated: only available in Editor and Development builds.
 /// </summary>
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
 public class ProjectileLauncher : NetworkBehaviour
 {
-    [SerializeField] private bool debugOnly = true;
     public GameObject projectilePrefab;
     public float launchForce = 30f;
     public float projectileLifetime = 5f;
@@ -44,7 +45,6 @@ public class ProjectileLauncher : NetworkBehaviour
     {
         if (!IsOwner) return;
         if (_mainCam == null) return;
-        if (debugOnly && !Debug.isDebugBuild) return;
 
         if (_lastFireTime + fireRate < Time.time && (Mouse.current.leftButton.wasPressedThisFrame ||
                                                      Mouse.current.rightButton.isPressed))
@@ -148,3 +148,4 @@ public class ProjectileLauncher : NetworkBehaviour
         ReturnToPool(obj);
     }
 }
+#endif
