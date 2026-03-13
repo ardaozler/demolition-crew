@@ -11,6 +11,7 @@ namespace InteractionSystem
         [SerializeField] private Transform holdPoint;
         [SerializeField] private float maxEquipRange = 4f;
         [SerializeField] private float maxAimOriginTolerance = 2f;
+        [SerializeField] private FragmentCarrier fragmentCarrier;
 
         private InputProvider inputProvider;
         private InteractionDetector detector;
@@ -36,7 +37,12 @@ namespace InteractionSystem
             inputProvider = GetComponent<InputProvider>();
             detector = GetComponent<InteractionDetector>();
             ownerCamera = GetComponentInChildren<Camera>(true);
+
+            if (fragmentCarrier == null)
+                fragmentCarrier = GetComponent<FragmentCarrier>();
         }
+
+        public void SetFragmentCarrier(FragmentCarrier carrier) => fragmentCarrier = carrier;
 
         public override void OnNetworkSpawn()
         {
@@ -51,6 +57,16 @@ namespace InteractionSystem
 
         public override void OnNetworkDespawn()
         {
+            // Server: force-drop held item so it isn't orphaned on disconnect
+            if (IsServer && equippedItemRef.Value.TryGet(out NetworkObject heldItem))
+            {
+                Vector3 dropPos = transform.position + transform.forward * 1.5f + Vector3.up * 0.5f;
+                heldItem.TryRemoveParent();
+                heldItem.transform.position = dropPos;
+                SetItemPhysics(heldItem, enabled: true);
+                equippedItemRef.Value = default;
+            }
+
             equippedItemRef.OnValueChanged -= OnEquippedItemChanged;
 
             if (!IsOwner) return;
@@ -83,19 +99,42 @@ namespace InteractionSystem
                 var targetMono = detector.CurrentTarget as MonoBehaviour;
                 if (targetMono == null) return;
 
+                if (!detector.CurrentTarget.CanInteract(gameObject)) return;
+
+                // Grinder: deposit carried debris
+                if (targetMono.GetComponent<DebrisGrinder>() != null)
+                {
+                    if (fragmentCarrier != null && fragmentCarrier.IsCarrying)
+                        fragmentCarrier.RequestDeposit();
+                    return;
+                }
+
+                // Debris pickup (only when not carrying a tool)
+                var debris = targetMono.GetComponent<CarryableDebris>();
+                if (debris != null)
+                {
+                    if (fragmentCarrier != null && !HasEquipped)
+                        fragmentCarrier.RequestPickup(debris.RegistryId);
+                    return;
+                }
+
+                // Tool equip (only when not carrying debris)
+                if (fragmentCarrier != null && fragmentCarrier.IsCarrying) return;
+
                 var netObj = targetMono.GetComponentInParent<NetworkObject>();
                 if (netObj == null) return;
 
-                // If looking at a pickupable item, swap-equip in one press
-                // (drops current item and picks up the new one)
-                if (detector.CurrentTarget.CanInteract(gameObject))
-                {
-                    EquipServerRpc(netObj);
-                    return;
-                }
+                EquipServerRpc(netObj);
+                return;
             }
 
-            // No valid target — just drop current item
+            // No valid target — drop current debris or tool
+            if (fragmentCarrier != null && fragmentCarrier.IsCarrying)
+            {
+                fragmentCarrier.RequestDrop();
+                return;
+            }
+
             if (currentUsable != null)
             {
                 UnequipServerRpc();
@@ -194,7 +233,6 @@ namespace InteractionSystem
 
         private void LateUpdate()
         {
-            if (!IsOwner) return;
             if (equippedNetObj != null && holdPoint != null)
             {
                 equippedNetObj.transform.position = holdPoint.position;
@@ -230,6 +268,15 @@ namespace InteractionSystem
         public void ServerForceEquip(NetworkObject item)
         {
             if (!IsServer) return;
+
+            // Drop existing item first to prevent ghost equipment
+            if (equippedItemRef.Value.TryGet(out NetworkObject oldItem))
+            {
+                Vector3 dropPos = transform.position + transform.forward * 1.5f + Vector3.up * 0.5f;
+                oldItem.TryRemoveParent();
+                DropItemClientRpc(oldItem, dropPos);
+            }
+
             item.TrySetParent(NetworkObject);
             equippedItemRef.Value = item;
         }

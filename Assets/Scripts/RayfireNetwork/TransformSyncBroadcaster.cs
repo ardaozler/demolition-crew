@@ -17,10 +17,14 @@ public class TransformSyncBroadcaster
 
     // Client-side interpolation: flat list for GC-free iteration
     private readonly List<int> _activeTargetIds = new();
+    private readonly HashSet<int> _activeTargetIdSet = new();
     private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _targetMap = new();
 
     // Host-side delta compression
     private readonly Dictionary<int, (Vector3 pos, Quaternion rot)> _lastSent = new();
+
+    // Fragments that must be synced even when kinematic (e.g. carried fragments)
+    private readonly HashSet<int> _forceSyncIds = new();
 
     // Pre-allocated buffers reused to avoid GC
     private readonly List<FragmentSnapshot> _snapshotBuffer = new();
@@ -37,6 +41,9 @@ public class TransformSyncBroadcaster
         _interpSpeed = interpSpeed;
     }
 
+    public void AddForceSync(int id) => _forceSyncIds.Add(id);
+    public void RemoveForceSync(int id) { _forceSyncIds.Remove(id); _lastSent.Remove(id); }
+
     public FragmentSnapshot[] CaptureHostState()
     {
         _snapshotBuffer.Clear();
@@ -47,11 +54,12 @@ public class TransformSyncBroadcaster
             var frag = kvp.Value;
             if (frag.Transform == null) continue;
 
-            // Skip kinematic rigidbodies — they are static scene objects
+            // Skip kinematic rigidbodies — they are static scene objects.
+            // Exception: fragments in the force-sync set (e.g. being carried).
             // NOTE: do NOT skip sleeping rigidbodies here. A fragment may have
             // settled at a new position since the last broadcast. The delta
             // check below already prevents re-sending unchanged positions.
-            if (frag.Rigidbody != null && frag.Rigidbody.isKinematic)
+            if (frag.Rigidbody != null && frag.Rigidbody.isKinematic && !_forceSyncIds.Contains(kvp.Key))
                 continue;
 
             int id = kvp.Key;
@@ -97,7 +105,7 @@ public class TransformSyncBroadcaster
         {
             var frag = kvp.Value;
             if (frag.Transform == null) continue;
-            if (frag.Rigidbody != null && frag.Rigidbody.isKinematic) continue;
+            if (frag.Rigidbody != null && frag.Rigidbody.isKinematic && !_forceSyncIds.Contains(kvp.Key)) continue;
 
             _snapshotBuffer.Add(new FragmentSnapshot(kvp.Key, frag.Transform.position, frag.Transform.rotation));
         }
@@ -120,8 +128,8 @@ public class TransformSyncBroadcaster
             var target = (snapshots[i].Position, snapshots[i].Rotation);
             _targetMap[id] = target;
 
-            // Add to active list if not already tracked
-            if (!_activeTargetIds.Contains(id))
+            // Add to active list if not already tracked (O(1) check via HashSet)
+            if (_activeTargetIdSet.Add(id))
                 _activeTargetIds.Add(id);
         }
     }
@@ -200,15 +208,17 @@ public class TransformSyncBroadcaster
         {
             if (!_registry.TryGet(kvp.Key, out var entry) || entry.Transform == null)
                 _purgeBuffer.Add(kvp.Key);
-            else if (entry.Rigidbody != null && entry.Rigidbody.isKinematic)
+            else if (entry.Rigidbody != null && entry.Rigidbody.isKinematic && !_forceSyncIds.Contains(kvp.Key))
                 _purgeBuffer.Add(kvp.Key);
         }
         for (int i = 0; i < _purgeBuffer.Count; i++)
             _lastSent.Remove(_purgeBuffer[i]);
     }
 
-    private static void SwapRemove(List<int> list, int index)
+    private void SwapRemove(List<int> list, int index)
     {
+        int id = list[index];
+        _activeTargetIdSet.Remove(id);
         int last = list.Count - 1;
         if (index < last)
             list[index] = list[last];

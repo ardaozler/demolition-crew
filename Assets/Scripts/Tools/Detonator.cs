@@ -26,9 +26,10 @@ namespace InteractionSystem
 
         public void OnUnequip(GameObject owner)
         {
-            // Player dropped the detonator without detonating
+            // Player dropped the detonator without detonating — sever both links
             if (linkedBomb != null && linkedBomb.gameObject != null)
                 linkedBomb.ClearDetonatorRef();
+            linkedBomb = null;
         }
 
         public void OnUseStarted(GameObject owner, Vector3 aimOrigin, Vector3 aimDirection)

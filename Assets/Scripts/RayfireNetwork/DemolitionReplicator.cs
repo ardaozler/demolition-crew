@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using InteractionSystem;
 using RayFire;
 using Unity.Netcode;
 using UnityEngine;
@@ -65,6 +66,7 @@ public class DemolitionReplicator
             int fragId = fragBaseId + i;
             _registry.Register(fragId, frag);
             fragPositions[i] = new FragmentSnapshot(fragId, frag.transform.position, frag.transform.rotation);
+            CarryableDebris.TryAdd(frag.gameObject, fragId);
         }
 
         _registry.Unregister(sceneId);
@@ -242,5 +244,6 @@ public class DemolitionReplicator
         clientFrag.transform.rotation = hostSnap.Rotation;
 
         _registry.RegisterTransformOnly(hostSnap.Id, clientFrag.transform, rb);
+        CarryableDebris.TryAdd(clientFrag.gameObject, hostSnap.Id);
     }
 }

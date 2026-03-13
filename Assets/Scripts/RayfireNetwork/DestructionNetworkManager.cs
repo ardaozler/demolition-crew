@@ -59,7 +59,10 @@ public class DestructionNetworkManager : NetworkBehaviour
             DisableClientPhysics();
 
         if (IsServer)
+        {
+            StabilizeHostShards();
             NetworkManager.OnClientDisconnectCallback += OnClientDisconnect;
+        }
 
         _initialized = true;
         Instance = this;
@@ -286,6 +289,35 @@ public class DestructionNetworkManager : NetworkBehaviour
         catch (Exception e)
         {
             Debug.LogException(e);
+        }
+    }
+
+    // ----- Fragment destruction (grinder / cleanup) -----
+
+    [Rpc(SendTo.NotServer)]
+    public void DestroyFragmentOnClientsRpc(int fragmentId)
+    {
+        if (_registry.TryGet(fragmentId, out var entry) && entry.Transform != null)
+            Destroy(entry.Transform.gameObject);
+        _registry.Unregister(fragmentId);
+    }
+
+    // ----- Host initialization -----
+
+    /// <summary>
+    /// Makes all pre-fractured shard rigidbodies kinematic on the host so that
+    /// casual physics contact (player walking, thrown objects) cannot push individual
+    /// shards. Damage-based demolition (sledgehammer, bomb explosion) and RayFire
+    /// connectivity activation are unaffected — they bypass kinematic state internally.
+    /// Vehicles use VehicleCollisionDamage to un-kinematic and damage shards on impact.
+    /// </summary>
+    private void StabilizeHostShards()
+    {
+        foreach (var kvp in _registry.All)
+        {
+            var frag = kvp.Value;
+            if (frag.Rigidbody != null)
+                frag.Rigidbody.isKinematic = true;
         }
     }
 

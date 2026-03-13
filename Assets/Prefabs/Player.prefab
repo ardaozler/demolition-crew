@@ -168,6 +168,8 @@ GameObject:
   - component: {fileID: 3142869426485498622}
   - component: {fileID: 8972402557938786002}
   - component: {fileID: 5049195440429841285}
+  - component: {fileID: 2277232251666789661}
+  - component: {fileID: 1485806805995181475}
   m_Layer: 3
   m_Name: Player
   m_TagString: Player
@@ -296,7 +298,7 @@ Rigidbody:
   m_ImplicitTensor: 1
   m_UseGravity: 1
   m_IsKinematic: 0
-  m_Interpolate: 0
+  m_Interpolate: 1
   m_Constraints: 112
   m_CollisionDetection: 1
 --- !u!114 &7675190950084499347
@@ -522,6 +524,44 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::InteractionSystem.EquipmentHandler
   ShowTopMostFoldoutHeaderGroup: 1
   holdPoint: {fileID: 3446051071937461363}
+  maxEquipRange: 4
+  maxAimOriginTolerance: 2
+  fragmentCarrier: {fileID: 0}
+--- !u!114 &2277232251666789661
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5639437520369338954}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 70adf391a76240641acb2a660a4261cf, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::InteractionSystem.InteractionHighlighter
+  highlightShader: {fileID: 4800000, guid: ec9891b16beda6a43846b08197372864, type: 3}
+  highlightColor: {r: 1, g: 0.8, b: 0.2, a: 0.6}
+  fresnelPower: 2
+  fresnelIntensity: 1.5
+  hintVerticalOffset: 1.2
+  hintFontSize: 3
+  hintTextColor: {r: 1, g: 1, b: 1, a: 1}
+  hintBackgroundColor: {r: 0, g: 0, b: 0, a: 0.5}
+--- !u!114 &1485806805995181475
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5639437520369338954}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fd909509aae5b12429fa940183a81981, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::InteractionSystem.FragmentCarrier
+  ShowTopMostFoldoutHeaderGroup: 1
+  holdPoint: {fileID: 0}
+  maxPickupRange: 3
 --- !u!1 &8614249429318449980
 GameObject:
   m_ObjectHideFlags: 0

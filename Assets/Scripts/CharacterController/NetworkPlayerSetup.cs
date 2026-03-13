@@ -1,6 +1,7 @@
 using Unity.Netcode;
 using UnityEngine;
 using CharacterSystem.Camera;
+using CharacterSystem.Core;
 using CharacterSystem.Handlers;
 
 public class NetworkPlayerSetup : NetworkBehaviour
@@ -11,6 +12,8 @@ public class NetworkPlayerSetup : NetworkBehaviour
 
         DisableComponent<InputProvider>();
         DisableComponent<InteractionSystem.InteractionDetector>();
+        DisableComponent<InteractionSystem.InteractionHighlighter>();
+        DisableComponent<GroundDetector>();
         DisableComponent<FirstPersonCamera>(searchChildren: true);
         DisableComponent<CameraInputProvider>(searchChildren: true);
         DisableComponent<UnityEngine.Camera>(searchChildren: true);
