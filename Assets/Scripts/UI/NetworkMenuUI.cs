@@ -67,6 +67,8 @@ public class NetworkMenuUI : MonoBehaviour
         if (GUILayout.Button("Host", GUILayout.Height(40f)))
         {
             statusMessage = "";
+            var transport = NetworkManager.Singleton.GetComponent<Unity.Netcode.Transports.UTP.UnityTransport>();
+            transport.ConnectionData.ServerListenAddress = "0.0.0.0";
             NetworkManager.Singleton.StartHost();
             showMenu = false;
         }

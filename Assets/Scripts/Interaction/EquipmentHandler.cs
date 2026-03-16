@@ -12,6 +12,7 @@ namespace InteractionSystem
         [SerializeField] private float maxEquipRange = 4f;
         [SerializeField] private float maxAimOriginTolerance = 2f;
         [SerializeField] private FragmentCarrier fragmentCarrier;
+        [SerializeField] private PlayerCarrier playerCarrier;
 
         private InputProvider inputProvider;
         private InteractionDetector detector;
@@ -40,6 +41,8 @@ namespace InteractionSystem
 
             if (fragmentCarrier == null)
                 fragmentCarrier = GetComponent<FragmentCarrier>();
+            if (playerCarrier == null)
+                playerCarrier = GetComponent<PlayerCarrier>();
         }
 
         public void SetFragmentCarrier(FragmentCarrier carrier) => fragmentCarrier = carrier;
@@ -78,12 +81,22 @@ namespace InteractionSystem
 
         private void HandleUseStarted()
         {
-            if (currentUsable == null) return;
             if (ownerCamera == null) return;
 
-            Vector3 origin = ownerCamera.transform.position;
-            Vector3 direction = ownerCamera.transform.forward;
-            UseServerRpc(origin, direction);
+            // Throw carried player on left-click
+            if (playerCarrier != null && playerCarrier.IsCarryingPlayer)
+            {
+                Vector3 origin = ownerCamera.transform.position;
+                Vector3 direction = ownerCamera.transform.forward;
+                playerCarrier.RequestThrow(origin, direction);
+                return;
+            }
+
+            if (currentUsable == null) return;
+
+            Vector3 aimOrigin = ownerCamera.transform.position;
+            Vector3 aimDirection = ownerCamera.transform.forward;
+            UseServerRpc(aimOrigin, aimDirection);
         }
 
         private void HandleUseStopped()
@@ -109,17 +122,30 @@ namespace InteractionSystem
                     return;
                 }
 
-                // Debris pickup (only when not carrying a tool)
+                // Debris pickup (only when not carrying a tool or player)
                 var debris = targetMono.GetComponent<CarryableDebris>();
                 if (debris != null)
                 {
-                    if (fragmentCarrier != null && !HasEquipped)
+                    if (fragmentCarrier != null && !HasEquipped
+                        && (playerCarrier == null || !playerCarrier.IsCarryingPlayer))
                         fragmentCarrier.RequestPickup(debris.RegistryId);
                     return;
                 }
 
-                // Tool equip (only when not carrying debris)
+                // Player pickup (only when hands are free)
+                var carryable = targetMono.GetComponent<PlayerCarrier>();
+                if (carryable != null)
+                {
+                    if (playerCarrier != null && !HasEquipped
+                        && !playerCarrier.IsCarryingPlayer
+                        && (fragmentCarrier == null || !fragmentCarrier.IsCarrying))
+                        playerCarrier.RequestCarry(targetMono.GetComponent<NetworkObject>());
+                    return;
+                }
+
+                // Tool equip (only when not carrying debris or player)
                 if (fragmentCarrier != null && fragmentCarrier.IsCarrying) return;
+                if (playerCarrier != null && playerCarrier.IsCarryingPlayer) return;
 
                 var netObj = targetMono.GetComponentInParent<NetworkObject>();
                 if (netObj == null) return;
@@ -128,7 +154,13 @@ namespace InteractionSystem
                 return;
             }
 
-            // No valid target — drop current debris or tool
+            // No valid target — drop carried player, debris, or tool
+            if (playerCarrier != null && playerCarrier.IsCarryingPlayer)
+            {
+                playerCarrier.RequestDrop();
+                return;
+            }
+
             if (fragmentCarrier != null && fragmentCarrier.IsCarrying)
             {
                 fragmentCarrier.RequestDrop();
