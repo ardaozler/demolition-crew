@@ -1,4 +1,5 @@
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 
 namespace InteractionSystem
@@ -165,9 +166,21 @@ namespace InteractionSystem
 
             if (doThrow)
             {
-                var rb = carriedNetObj.GetComponent<Rigidbody>();
-                if (rb != null)
-                    rb.AddForce(aimDir * throwForce, ForceMode.Impulse);
+                // Apply force via the owning client so owner-authoritative NetworkTransform
+                // doesn't overwrite the impulse.
+                if (carriedPC != null)
+                    carriedPC.ApplyThrowForceRpc(aimDir * throwForce);
+            }
+        }
+
+        [Rpc(SendTo.Owner)]
+        private void ApplyThrowForceRpc(Vector3 force)
+        {
+            var rb = GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.isKinematic = false;
+                rb.AddForce(force, ForceMode.Impulse);
             }
         }
 
@@ -196,9 +209,19 @@ namespace InteractionSystem
                 var col = GetComponent<CapsuleCollider>();
                 if (col != null)
                     col.enabled = false;
+
+                // Disable NetworkTransform so it doesn't fight with carry positioning
+                var netTransform = GetComponent<NetworkTransform>();
+                if (netTransform != null)
+                    netTransform.enabled = false;
             }
             else
             {
+                // Re-enable NetworkTransform before restoring physics
+                var netTransform = GetComponent<NetworkTransform>();
+                if (netTransform != null)
+                    netTransform.enabled = true;
+
                 // Restore physics when released
                 var rb = GetComponent<Rigidbody>();
                 if (rb != null)
