@@ -100,3 +100,8 @@ InitTestScene*.unity*
 
 # Claude Code
 .claude/
+
+# Claude Code ephemeral files
+production/session-state/
+production/session-logs/
+*.stackdump
