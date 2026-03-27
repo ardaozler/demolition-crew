@@ -8,7 +8,16 @@ public class NetworkPlayerSetup : NetworkBehaviour
 {
     public override void OnNetworkSpawn()
     {
-        if (IsOwner) return;
+        // Owner: enable Rigidbody interpolation for smooth local movement.
+        // The prefab defaults to None (correct for non-owners where
+        // NetworkTransform handles interpolation instead).
+        if (IsOwner)
+        {
+            var rb = GetComponent<Rigidbody>();
+            if (rb != null)
+                rb.interpolation = RigidbodyInterpolation.Interpolate;
+            return;
+        }
 
         DisableComponent<InputProvider>();
         DisableComponent<InteractionSystem.InteractionDetector>();
@@ -18,6 +27,10 @@ public class NetworkPlayerSetup : NetworkBehaviour
         DisableComponent<CameraInputProvider>(searchChildren: true);
         DisableComponent<UnityEngine.Camera>(searchChildren: true);
         DisableComponent<AudioListener>(searchChildren: true);
+
+        DisableComponent<MovementHandler>();
+        DisableComponent<JumpHandler>();
+        DisableComponent<GravityHandler>();
     }
 
     private void DisableComponent<T>(bool searchChildren = false) where T : Behaviour

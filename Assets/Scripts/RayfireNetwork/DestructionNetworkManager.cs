@@ -125,7 +125,6 @@ public class DestructionNetworkManager : NetworkBehaviour
             try
             {
                 _broadcaster.InterpolateClient(Time.deltaTime);
-                _replicator.FlushKinematicEnforcement();
             }
             catch (Exception e)
             {

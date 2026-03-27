@@ -33,8 +33,13 @@ namespace InteractionSystem
                     rigid.ApplyDamage(settings.Damage, hit.point, settings.DamageRadius);
 
                 var rb = hit.collider.GetComponentInParent<Rigidbody>();
-                if (rb != null && !rb.isKinematic)
+                if (rb != null)
                 {
+                    // Un-kinematic so the force actually moves the shard.
+                    // Initial shards are kinematic from StabilizeHostShards.
+                    if (rb.isKinematic)
+                        rb.isKinematic = false;
+
                     Vector3 right = Vector3.Cross(Vector3.up, aimDirection).normalized;
                     Vector3 forceDir = (aimDirection + -right * settings.LateralBias).normalized;
                     rb.AddForceAtPosition(forceDir * settings.HitForce, hit.point, ForceMode.Impulse);

@@ -23,9 +23,9 @@ public struct FragmentSnapshot : INetworkSerializable
         if (serializer.IsWriter)
         {
             var writer = serializer.GetFastBufferWriter();
-            writer.WriteValueSafe(FloatToHalf(Position.x));
-            writer.WriteValueSafe(FloatToHalf(Position.y));
-            writer.WriteValueSafe(FloatToHalf(Position.z));
+            writer.WriteValueSafe(FloatToHalf(SanitizeFloat(Position.x)));
+            writer.WriteValueSafe(FloatToHalf(SanitizeFloat(Position.y)));
+            writer.WriteValueSafe(FloatToHalf(SanitizeFloat(Position.z)));
         }
         else
         {
@@ -33,7 +33,14 @@ public struct FragmentSnapshot : INetworkSerializable
             reader.ReadValueSafe(out ushort hx);
             reader.ReadValueSafe(out ushort hy);
             reader.ReadValueSafe(out ushort hz);
-            Position = new Vector3(HalfToFloat(hx), HalfToFloat(hy), HalfToFloat(hz));
+            float fx = HalfToFloat(hx);
+            float fy = HalfToFloat(hy);
+            float fz = HalfToFloat(hz);
+            // Guard against NaN from half-precision overflow/underflow
+            Position = new Vector3(
+                SanitizeFloat(fx),
+                SanitizeFloat(fy),
+                SanitizeFloat(fz));
         }
 
         // Smallest-three quaternion compression (7 bytes instead of 16)
@@ -47,6 +54,16 @@ public struct FragmentSnapshot : INetworkSerializable
             var reader = serializer.GetFastBufferReader();
             Rotation = ReadCompressedQuaternion(reader);
         }
+    }
+
+    /// <summary>
+    /// Clamps to half-precision range and replaces NaN/Infinity with 0.
+    /// </summary>
+    private static float SanitizeFloat(float v)
+    {
+        if (float.IsNaN(v) || float.IsInfinity(v)) return 0f;
+        // half-precision max is ~65504
+        return Mathf.Clamp(v, -65500f, 65500f);
     }
 
     private static void WriteCompressedQuaternion(FastBufferWriter writer, Quaternion q)
@@ -91,6 +108,11 @@ public struct FragmentSnapshot : INetworkSerializable
         float a = HalfToFloat(ha);
         float b = HalfToFloat(hb);
         float c = HalfToFloat(hc);
+
+        // Guard against NaN
+        if (float.IsNaN(a)) a = 0f;
+        if (float.IsNaN(b)) b = 0f;
+        if (float.IsNaN(c)) c = 0f;
 
         float missing = Mathf.Sqrt(Mathf.Max(0f, 1f - a * a - b * b - c * c));
 

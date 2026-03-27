@@ -133,7 +133,18 @@ namespace InteractionSystem
             manager.Broadcaster?.RemoveForceSync(fragId);
 
             if (manager.Registry.TryGet(fragId, out var entry) && entry.Transform != null)
+            {
+                // Award currency based on fragment volume before destroying it
+                var currencyMgr = CurrencyManager.Instance;
+                if (currencyMgr != null)
+                {
+                    var renderer = entry.Transform.GetComponent<Renderer>();
+                    int value = currencyMgr.CalculateFragmentValue(renderer);
+                    currencyMgr.AwardCurrency(value);
+                }
+
                 Destroy(entry.Transform.gameObject);
+            }
 
             manager.Registry.Unregister(fragId);
             manager.DestroyFragmentOnClientsRpc(fragId);

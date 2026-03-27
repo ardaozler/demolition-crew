@@ -59,5 +59,10 @@ namespace InteractionSystem
         }
 
         public void Interact(GameObject player) { }
+
+        public override void OnNetworkDespawn()
+        {
+            gameObject.SetActive(false);
+        }
     }
 }

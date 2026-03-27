@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04cc7dbc18021794d94aed723da272ff, type: 3}
   m_Name: DefaultBombSettings
   m_EditorClassIdentifier: Assembly-CSharp::InteractionSystem.Tools.BombSettings
-  throwForce: 5
+  throwForce: 20
   range: 3
   strength: 2
   damage: 20

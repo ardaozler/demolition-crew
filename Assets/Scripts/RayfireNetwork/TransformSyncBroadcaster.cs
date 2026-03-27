@@ -5,12 +5,17 @@ using UnityEngine;
 /// Every N fixed frames, gathers transform snapshots from the FragmentRegistry and broadcasts them to clients.
 /// Only sends fragments that have moved beyond a threshold (delta compression).
 /// Does NOT skip sleeping rigidbodies — they may have settled at new positions since last broadcast.
+///
+/// Client-side: fragments are dynamic (players can push them). Host corrections use
+/// MovePosition/MoveRotation which smoothly moves dynamic bodies while respecting physics.
+/// Large desync snaps instantly. Small differences converge over a few frames.
 /// </summary>
 public class TransformSyncBroadcaster
 {
-    private const float PositionThresholdSqr = 0.0025f; // 0.05 units
-    private const float RotationThreshold = 1f;          // 1 degree
-    private const float ConvergenceThresholdSqr = 0.0001f; // 0.01 units — close enough to stop interpolating
+    private const float PositionThresholdSqr = 0.0025f;   // 0.05 units — delta compress threshold
+    private const float RotationThreshold = 1f;            // 1 degree
+    private const float SnapDistSqr = 9f;                 // > 3m — teleport instantly
+    private const float ConvergenceThresholdSqr = 0.001f;  // stop interpolating when close
 
     private readonly FragmentRegistry _registry;
     private readonly float _interpSpeed;
@@ -54,11 +59,8 @@ public class TransformSyncBroadcaster
             var frag = kvp.Value;
             if (frag.Transform == null) continue;
 
-            // Skip kinematic rigidbodies — they are static scene objects.
+            // Skip kinematic rigidbodies — they are pre-demolition scene shards.
             // Exception: fragments in the force-sync set (e.g. being carried).
-            // NOTE: do NOT skip sleeping rigidbodies here. A fragment may have
-            // settled at a new position since the last broadcast. The delta
-            // check below already prevents re-sending unchanged positions.
             if (frag.Rigidbody != null && frag.Rigidbody.isKinematic && !_forceSyncIds.Contains(kvp.Key))
                 continue;
 
@@ -81,7 +83,6 @@ public class TransformSyncBroadcaster
         if (_snapshotBuffer.Count == 0)
             return System.Array.Empty<FragmentSnapshot>();
 
-        // Reuse array if size matches; only reallocate when count changes
         int count = _snapshotBuffer.Count;
         if (_snapshotArray.Length != count)
             _snapshotArray = new FragmentSnapshot[count];
@@ -124,13 +125,26 @@ public class TransformSyncBroadcaster
     {
         for (int i = 0; i < snapshots.Length; i++)
         {
-            int id = snapshots[i].Id;
-            var target = (snapshots[i].Position, snapshots[i].Rotation);
-            _targetMap[id] = target;
+            var pos = snapshots[i].Position;
+            // Skip snapshots with NaN positions (corrupt data from half-precision)
+            if (float.IsNaN(pos.x) || float.IsNaN(pos.y) || float.IsNaN(pos.z))
+                continue;
 
-            // Add to active list if not already tracked (O(1) check via HashSet)
+            int id = snapshots[i].Id;
+            _targetMap[id] = (pos, snapshots[i].Rotation);
+
             if (_activeTargetIdSet.Add(id))
                 _activeTargetIds.Add(id);
+
+            // If this fragment was settled (kinematic) and the host says it
+            // moved, wake it up so MovePosition can move it.
+            if (_registry.TryGet(id, out var entry) &&
+                entry.Rigidbody != null && entry.Rigidbody.isKinematic)
+            {
+                float moveDist = (entry.Transform.position - pos).sqrMagnitude;
+                if (moveDist > PositionThresholdSqr)
+                    entry.Rigidbody.isKinematic = false;
+            }
         }
     }
 
@@ -138,14 +152,12 @@ public class TransformSyncBroadcaster
     {
         float t = 1f - Mathf.Exp(-_interpSpeed * deltaTime);
 
-        // Iterate flat list backwards so we can swap-remove converged entries
         for (int i = _activeTargetIds.Count - 1; i >= 0; i--)
         {
             int id = _activeTargetIds[i];
 
             if (!_registry.TryGet(id, out var entry) || entry.Transform == null)
             {
-                // Fragment gone — remove from active list
                 SwapRemove(_activeTargetIds, i);
                 _targetMap.Remove(id);
                 continue;
@@ -159,9 +171,27 @@ public class TransformSyncBroadcaster
 
             var curPos = entry.Transform.position;
             var curRot = entry.Transform.rotation;
+            float distSqr = (curPos - target.pos).sqrMagnitude;
 
-            var newPos = Vector3.Lerp(curPos, target.pos, t);
-            var newRot = Quaternion.Slerp(curRot, target.rot, t);
+            Vector3 newPos;
+            Quaternion newRot;
+
+            if (distSqr > SnapDistSqr)
+            {
+                // Major desync — snap instantly
+                newPos = target.pos;
+                newRot = target.rot;
+                if (entry.Rigidbody != null)
+                {
+                    entry.Rigidbody.linearVelocity = Vector3.zero;
+                    entry.Rigidbody.angularVelocity = Vector3.zero;
+                }
+            }
+            else
+            {
+                newPos = Vector3.Lerp(curPos, target.pos, t);
+                newRot = Quaternion.Slerp(curRot, target.rot, t);
+            }
 
             if (entry.Rigidbody != null)
             {
@@ -174,24 +204,31 @@ public class TransformSyncBroadcaster
                 entry.Transform.rotation = newRot;
             }
 
-            // If converged, stop interpolating until a new snapshot arrives
+            // Converged — settle the fragment to kinematic so gravity can't
+            // pull it away from the host-authoritative resting position.
+            // ReceiveSnapshots will wake it up if the host says it moved again.
             if ((newPos - target.pos).sqrMagnitude < ConvergenceThresholdSqr &&
                 Quaternion.Angle(newRot, target.rot) < 0.5f)
             {
+                if (entry.Rigidbody != null && !entry.Rigidbody.isKinematic)
+                {
+                    entry.Rigidbody.linearVelocity = Vector3.zero;
+                    entry.Rigidbody.angularVelocity = Vector3.zero;
+                    entry.Rigidbody.isKinematic = true;
+                    entry.Transform.position = target.pos;
+                    entry.Transform.rotation = target.rot;
+                }
+
                 SwapRemove(_activeTargetIds, i);
                 _targetMap.Remove(id);
             }
         }
     }
 
-    /// <summary>
-    /// Remove stale entries for fragments that no longer exist or have gone kinematic.
-    /// </summary>
     public void PurgeStale()
     {
         _purgeBuffer.Clear();
 
-        // Purge active targets (client-side)
         for (int i = _activeTargetIds.Count - 1; i >= 0; i--)
         {
             int id = _activeTargetIds[i];
@@ -202,13 +239,10 @@ public class TransformSyncBroadcaster
             }
         }
 
-        // Purge _lastSent for fragments no longer in the registry or now kinematic (host-side)
         _purgeBuffer.Clear();
         foreach (var kvp in _lastSent)
         {
             if (!_registry.TryGet(kvp.Key, out var entry) || entry.Transform == null)
-                _purgeBuffer.Add(kvp.Key);
-            else if (entry.Rigidbody != null && entry.Rigidbody.isKinematic && !_forceSyncIds.Contains(kvp.Key))
                 _purgeBuffer.Add(kvp.Key);
         }
         for (int i = 0; i < _purgeBuffer.Count; i++)

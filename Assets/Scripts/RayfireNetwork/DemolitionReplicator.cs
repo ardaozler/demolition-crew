@@ -23,7 +23,6 @@ public class DemolitionReplicator
     private readonly Queue<DemolitionRecord> _pendingRecords = new();
     private readonly List<DemolitionRecord> _demolitionHistory = new();
     private readonly bool _isHost;
-    private bool _needsKinematicEnforcement;
 
     public IReadOnlyList<DemolitionRecord> DemolitionHistory => _demolitionHistory;
 
@@ -144,38 +143,43 @@ public class DemolitionReplicator
 
             RegisterClientFragments(rigid.fragments, hostFragPositions);
         }
+        else if (!rigid.HasFragments || rigid.fragments.Count == 0)
+        {
+            // DemolishForced failed to produce fragments — destroy the original
+            // object so it doesn't remain as a ghost the player can see but not
+            // interact with.
+            Debug.LogWarning(
+                $"[DemolitionReplicator] DemolishForced produced no fragments for object {sceneObjectId}. " +
+                "Destroying original to prevent ghost.");
+            if (rigid.gameObject != null)
+                Object.Destroy(rigid.gameObject);
+        }
 
-        // Flag that kinematic state needs re-enforcement after this frame's
-        // demolitions are done. The manager batches this into a single pass.
-        _needsKinematicEnforcement = true;
+        // Block RayFire demolition cascades on any neighboring shards that
+        // got activated by the connectivity system during DemolishForced.
+        EnforceDemolitionBlock();
     }
 
     /// <summary>
-    /// If any demolitions ran this frame, re-enforce kinematic state on all
-    /// registered fragments. Called once per frame by the manager, not per-demolition.
+    /// Ensures all registered fragments have dmlTp = None so RayFire's
+    /// connectivity system can't trigger unwanted cascading demolitions on the
+    /// client. Fragments stay DYNAMIC so players can push them around.
     /// </summary>
-    public void FlushKinematicEnforcement()
+    private void EnforceDemolitionBlock()
     {
-        if (!_needsKinematicEnforcement) return;
-        _needsKinematicEnforcement = false;
-
         foreach (var kvp in _registry.All)
         {
             var frag = kvp.Value;
-            if (frag.Rigidbody != null && !frag.Rigidbody.isKinematic)
-            {
-                frag.Rigidbody.isKinematic = true;
-                frag.Rigidbody.interpolation = RigidbodyInterpolation.None;
-            }
+            if (frag.Rigid != null && frag.Rigid.dmlTp != DemolitionType.None)
+                frag.Rigid.dmlTp = DemolitionType.None;
         }
     }
-    
 
     /// <summary>
-    /// Match client fragments to host fragment IDs, register them, and make them kinematic.
-    /// When counts match, uses index-based matching (RayFire produces deterministic fragment
-    /// order for the same mesh when position/rotation match). Falls back to greedy
-    /// nearest-position matching when counts differ.
+    /// Match client fragments to host fragment IDs, register them, and snap
+    /// them to host positions. Fragments are left DYNAMIC so clients can
+    /// interact with them physically (push, collide). Host corrections are
+    /// applied softly by TransformSyncBroadcaster.
     /// </summary>
     private void RegisterClientFragments(List<RayfireRigid> clientFragments, FragmentSnapshot[] hostPositions)
     {
@@ -230,16 +234,19 @@ public class DemolitionReplicator
 
     private void RegisterAndSnapFragment(RayfireRigid clientFrag, FragmentSnapshot hostSnap)
     {
+        // Block RayFire cascades but keep rigidbody DYNAMIC for player interaction
         clientFrag.dmlTp = DemolitionType.None;
+
         var rb = clientFrag.GetComponent<Rigidbody>();
         if (rb != null)
         {
-            rb.isKinematic = true;
-            rb.interpolation = RigidbodyInterpolation.None;
+            // Snap to host position and zero velocity so RayFire's explosion
+            // velocities don't cause divergence. Client physics takes over
+            // from the host-authoritative starting position.
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
         }
 
-        // Snap to host position immediately so there's no visual gap
-        // until the next transform sync arrives
         clientFrag.transform.position = hostSnap.Position;
         clientFrag.transform.rotation = hostSnap.Rotation;
 

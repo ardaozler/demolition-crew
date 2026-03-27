@@ -1,6 +1,9 @@
 using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine;
+using CharacterSystem.Camera;
+using CharacterSystem.Core;
+using CharacterSystem.Handlers;
 
 namespace InteractionSystem
 {
@@ -17,7 +20,6 @@ namespace InteractionSystem
             default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
         private Transform _carriedTransform;
-        private Transform _carrierCarryPoint;
         private Rigidbody _carriedRb;
         private CapsuleCollider _carriedCollider;
 
@@ -162,26 +164,34 @@ namespace InteractionSystem
             Vector3 dropPos = transform.position + transform.forward * 1.5f + Vector3.up * 0.5f;
             carriedNetObj.transform.position = dropPos;
 
-            RestorePhysics(carriedNetObj);
-
-            if (doThrow)
-            {
-                // Apply force via the owning client so owner-authoritative NetworkTransform
-                // doesn't overwrite the impulse.
-                if (carriedPC != null)
-                    carriedPC.ApplyThrowForceRpc(aimDir * throwForce);
-            }
+            // Send release + throw to the carried player's owner so it happens
+            // atomically — no server RestorePhysics that NT would overwrite.
+            Vector3 force = doThrow ? aimDir * throwForce : Vector3.zero;
+            if (carriedPC != null)
+                carriedPC.OwnerReleaseRpc(dropPos, force);
         }
 
+        /// <summary>
+        /// Sent to the carried player's owner. Restores physics and applies
+        /// throw force in one atomic step so NetworkTransform doesn't fight.
+        /// </summary>
         [Rpc(SendTo.Owner)]
-        private void ApplyThrowForceRpc(Vector3 force)
+        private void OwnerReleaseRpc(Vector3 dropPosition, Vector3 force)
         {
+            transform.position = dropPosition;
+
             var rb = GetComponent<Rigidbody>();
             if (rb != null)
             {
                 rb.isKinematic = false;
-                rb.AddForce(force, ForceMode.Impulse);
+                rb.linearVelocity = Vector3.zero;
+                if (force.sqrMagnitude > 0.01f)
+                    rb.AddForce(force, ForceMode.Impulse);
             }
+
+            var col = GetComponent<CapsuleCollider>();
+            if (col != null)
+                col.enabled = true;
         }
 
         private void OnCarriedPlayerChanged(NetworkObjectReference oldRef, NetworkObjectReference newRef)
@@ -195,8 +205,6 @@ namespace InteractionSystem
 
         private void OnMyCarrierChanged(NetworkObjectReference oldRef, NetworkObjectReference newRef)
         {
-            _carrierCarryPoint = null;
-
             if (newRef.TryGet(out NetworkObject newObj))
             {
                 CacheCarrier(newObj);
@@ -214,6 +222,11 @@ namespace InteractionSystem
                 var netTransform = GetComponent<NetworkTransform>();
                 if (netTransform != null)
                     netTransform.enabled = false;
+
+                // Disable input and movement on the carried player so they can't
+                // rotate/move independently while being held
+                if (IsOwner)
+                    SetInputEnabled(false);
             }
             else
             {
@@ -230,7 +243,33 @@ namespace InteractionSystem
                 var col = GetComponent<CapsuleCollider>();
                 if (col != null)
                     col.enabled = true;
+
+                // Re-enable input and movement
+                if (IsOwner)
+                    SetInputEnabled(true);
             }
+        }
+
+        /// <summary>
+        /// Enables or disables movement, input, and camera on the local player.
+        /// Called when being picked up or released.
+        /// </summary>
+        private void SetInputEnabled(bool enabled)
+        {
+            var movement = GetComponent<MovementHandler>();
+            if (movement != null) movement.enabled = enabled;
+
+            var jump = GetComponent<JumpHandler>();
+            if (jump != null) jump.enabled = enabled;
+
+            var gravity = GetComponent<GravityHandler>();
+            if (gravity != null) gravity.enabled = enabled;
+
+            var input = GetComponent<InputProvider>();
+            if (input != null) input.enabled = enabled;
+
+            var cam = GetComponentInChildren<FirstPersonCamera>();
+            if (cam != null) cam.enabled = enabled;
         }
 
         private void CacheCarriedPlayer(NetworkObject carried)
@@ -243,22 +282,16 @@ namespace InteractionSystem
         {
             var carrierPC = carrier.GetComponent<PlayerCarrier>();
             if (carrierPC != null)
-                _carrierCarryPoint = carrierPC.carryPoint;
+                _ = carrierPC.carryPoint; // just validate it exists
         }
 
         private void LateUpdate()
         {
-            // Carrier: position carried player at carry point (visual for all clients)
+            // Carrier: position carried player at carry point (all clients see this)
             if (_carriedTransform != null && carryPoint != null)
             {
                 _carriedTransform.position = carryPoint.position;
                 _carriedTransform.rotation = Quaternion.Euler(0f, transform.eulerAngles.y, 0f);
-            }
-
-            // Being carried + owner: snap to carrier's carry point (authoritative via NetworkTransform)
-            if (IsOwner && _carrierCarryPoint != null)
-            {
-                transform.position = _carrierCarryPoint.position;
             }
         }
 

@@ -130,6 +130,21 @@ namespace InteractionSystem
 
             rfBomb.Explode(0f);
 
+            // RayfireBomb applied force to the original shards, but they were
+            // kinematic (StabilizeHostShards) so the force had no effect. The
+            // damage triggered demolition, creating dynamic fragments. Apply
+            // explosion force directly to those new fragments.
+            Vector3 center = transform.position;
+            float range = settings.Range;
+            float force = settings.Strength * 200f;
+            var colliders = Physics.OverlapSphere(center, range);
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                var hitRb = colliders[i].attachedRigidbody;
+                if (hitRb != null && !hitRb.isKinematic)
+                    hitRb.AddExplosionForce(force, center, range, 0.3f, ForceMode.Impulse);
+            }
+
             // Delay destroy to let RayfireBomb finish any deferred physics work
             Object.Destroy(bombGo, 0.1f);
 
@@ -148,5 +163,12 @@ namespace InteractionSystem
             detonatorHolder = null;
         }
 
+        public override void OnNetworkDespawn()
+        {
+            // Scene-placed NetworkObjects are not destroyed by Despawn(), only
+            // deactivated in NGO's tracking. Force-hide the GameObject so
+            // late-joining clients don't see a ghost at the original position.
+            gameObject.SetActive(false);
+        }
     }
 }

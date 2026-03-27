@@ -47,12 +47,10 @@ public class DamageHandler
             if (dist > _maxDamageRange) return;
         }
 
-        // Inactive MeshRoot shard — activate directly
+        // Inactive MeshRoot shard — activate before applying damage so the
+        // shard becomes dynamic and the demolition gets replicated to clients.
         if (entry.Rigid.simTp == SimType.Inactive && entry.Rigid.meshRoot != null)
-        {
             entry.Rigid.Activate();
-            return;
-        }
 
         if (entry.Rigidbody != null && entry.Rigidbody.isKinematic)
             entry.Rigidbody.isKinematic = false;
